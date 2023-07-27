@@ -1,0 +1,17 @@
+[package]
+name = "doubletake"
+version = "0.0.0-alpha.1"
+license = "CC0-1.0"
+edition = "2021"
+authors = [ "Steven Roose <steven@roose.io>", "James Dorfman" ]
+description = "A library and CLI tool for creating Bitcoin double spend prevention bonds on Liquid"
+
+
+[dependencies]
+bitcoin = { version = "0.30.1", features = [ "rand" ] }
+elements = "0.23.0"
+hex-conservative = "0.1.1"
+
+[dev-dependencies]
+elements-consensus = { git = "https://github.com/stevenroose/rust-elements-consensus.git", rev = "b9898ce107c30f7253828dfa5ffcc1de37a8fa63" }
+link-cplusplus = "1"
