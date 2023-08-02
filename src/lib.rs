@@ -2,13 +2,12 @@
 
 mod util;
 
-
-
 use std::io::{self, Cursor, Seek};
 
 use bitcoin::{Amount, FeeRate, Weight};
 use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::{self, PublicKey, Secp256k1, SecretKey};
+use elements::AssetId;
 use elements::script::Builder;
 use elements::opcodes::all::*;
 use elements::opcodes::*;
@@ -26,6 +25,18 @@ pub struct ElementsUtxo {
 	pub output: elements::TxOut,
 }
 
+/// Create a burn output, this is critical as this will be encoded
+/// into the covenant script, so it needs to be deterministic.
+fn burn_output(amount: Amount, asset: AssetId) -> elements::TxOut {
+	elements::TxOut {
+		value: elements::confidential::Value::Explicit(amount.to_sat()),
+		asset: elements::confidential::Asset::Explicit(asset),
+		nonce: elements::confidential::Nonce::Null,
+		script_pubkey: Builder::new().push_opcode(OP_RETURN).into_script(),
+		witness: elements::TxOutWitness::default(),
+	}
+}
+
 trait BuilderExt: Into<Builder> + From<Builder> {
 	/// Check that the top stack item is of the required size.
 	fn check_stack_item_size(self, size: i64) -> Self {
@@ -36,7 +47,7 @@ trait BuilderExt: Into<Builder> + From<Builder> {
 			.into()
 	}
 
-	/// Check that the input is a valid sighash in the following format
+	/// Check that the input is a valid *Bitcoin* sighash in the following format
 	/// and a correct corresponding signature.
 	///
 	/// - `<version><prevouts><sequences>` (exact 68 bytes)
@@ -93,20 +104,23 @@ trait BuilderExt: Into<Builder> + From<Builder> {
 
 	/// Create a covenant that forces the current tx to burn a given amount
 	/// and allow one extra output that can take the remaining money.
-	fn burn_covenant(self, burn_amount: Amount) -> Self {
-		let burn_txout = elements::TxOut {
-			asset: elements::confidential::Asset::Explicit(elements::AssetId::LIQUID_BTC),
-			value: elements::confidential::Value::Explicit(burn_amount.to_sat()),
-			nonce: elements::confidential::Nonce::Null,
-			script_pubkey: Builder::new().push_opcode(OP_RETURN).into_script(),
-			witness: elements::TxOutWitness::default(),
-		};
+	///
+	/// The following input is expected, for the *Liquid* sighash:
+	///
+	/// - `<other-outputs>`: outputs to claim non-burn amount
+	/// - `<version><prevouts><sequences><prevout><script-code><value><sequence>`:
+	///		pre-outputs sighash items
+	/// - `<locktime><sighashtype>`: post-outputs sighash items
+	/// - `<pubkey>`: the pubkey that signed the tx
+	/// - `<signature>`: the signature on the tx
+	fn burn_covenant(self, burn_amount: Amount, asset: AssetId) -> Self {
+		let burn_txout = burn_output(burn_amount, asset);
 		self.into()
 			// build the outputs hash
 			.push_slice(&elements::encode::serialize(&burn_txout))
 			.push_opcode(OP_SWAP)
 			.push_opcode(OP_CAT)
-			.push_opcode(OP_SHA256)
+			.push_opcode(OP_HASH256)
 
 			// cat with first part of sighash
 			.push_opcode(OP_CAT)
@@ -132,6 +146,11 @@ trait BuilderExt: Into<Builder> + From<Builder> {
 			.push_opcode(OP_CHECKSIGFROMSTACKVERIFY)
 
 			// then the checksig on the tx
+			// add the SIGHASH_ALL byte before CHECKSIGVERIFY
+			.push_opcode(OP_SWAP)
+			.push_int(1)
+			.push_opcode(OP_CAT)
+			.push_opcode(OP_SWAP)
 			.push_opcode(OP_CHECKSIGVERIFY)
 			.into()
 	}
@@ -162,12 +181,11 @@ pub struct SegwitV0BondSpec {
 /// First return value is the full script, second is the scriptPubkey.
 pub fn create_segwit_v0_bond_script(
 	spec: &SegwitV0BondSpec,
+	asset: AssetId,
 ) -> (elements::Script, elements::Script) {
 	let script = Builder::new()
 		// first add the locktime clause for when the bond expires
-		.push_opcode(OP_DUP) // so the if doesn't take stuff from the stack
 		.push_opcode(OP_NOTIF)
-		.push_opcode(OP_DROP)
 		.push_int(spec.lock_time.to_consensus_u32() as i64)
 		.push_opcode(OP_CLTV)
 		.push_opcode(OP_DROP)
@@ -206,10 +224,13 @@ pub fn create_segwit_v0_bond_script(
 		.push_opcode(OP_EQUALVERIFY)
 
 		// Covenant to enforce burn amount
-		.burn_covenant(spec.bond_value)
+		.burn_covenant(spec.bond_value, asset)
 
 		// end the if clause
 		.push_opcode(OP_ENDIF)
+
+		// if no VERIFY operations failed, exit succesfully
+		.push_opcode(OP_TRUE)
 
 		.into_script();
 
@@ -305,7 +326,7 @@ impl<'a> SpendDataV0<'a> {
 			input_value,
 			sighash_type,
 		).expect("error doing sighash");
-		debug_assert_eq!(buf.len(), supposed_len);
+		assert_eq!(buf.len(), supposed_len);
 		buf
 	}
 
@@ -319,7 +340,8 @@ impl<'a> SpendDataV0<'a> {
 		)
 	}
 
-	/// Push the sighash items on the stack for the given index of the given tx.
+	/// Push the *Bitcoin* sighash items on the stack for the given index
+	/// of the given tx.
 	///
 	/// Items are pushed in reverse order than they should actually appear
 	/// in the witness.
@@ -344,7 +366,7 @@ impl<'a> SpendDataV0<'a> {
 		witness.push(cur.take_bytes(12 + scriptcode_len).unwrap());
 		witness.push(cur.take_bytes(32).unwrap());
 		witness.push(cur.take_bytes(8).unwrap());
-		witness.push(self.signature.to_vec());
+		witness.push(self.signature.sig.serialize_der().to_vec());
 	}
 }
 
@@ -354,7 +376,7 @@ impl<'a> SpendDataV0<'a> {
 /// Items are pushed in reverse order than they should actually appear
 /// in the witness.
 ///
-/// They are pushed as follows:
+/// They are pushed as follows, as items of a *Liquid* sighash:
 ///
 /// - `<other-output>`: output to claim non-burn amount
 /// - `<version><prevouts><sequences><prevout><script-code><value><sequence>`:
@@ -365,7 +387,7 @@ impl<'a> SpendDataV0<'a> {
 fn push_v0_burn_covenant_items(
 	secp: &Secp256k1<impl secp256k1::Signing>,
 	witness: &mut Vec<Vec<u8>>,
-	other_output: &elements::TxOut,
+	other_outputs: &[elements::TxOut],
 	spending_tx: &elements::Transaction,
 	bond_script: &elements::Script,
 	total_amount: Amount,
@@ -373,8 +395,8 @@ fn push_v0_burn_covenant_items(
 	let mut shc = elements::sighash::SighashCache::new(spending_tx);
 	// we're going to write the sighash data to a buffer
 	// and break it into 5 pieces.
-	let covenant_script_len = bond_script.encoded_len();
-	let mut buf = Vec::with_capacity(160 + 1 + covenant_script_len);
+	let bond_script_len = bond_script.encoded_len();
+	let mut buf = Vec::with_capacity(189 + bond_script_len);
 	shc.encode_segwitv0_signing_data_to(
 		&mut buf,
 		0,
@@ -382,9 +404,7 @@ fn push_v0_burn_covenant_items(
 		elements::confidential::Value::Explicit(total_amount.to_sat()),
 		elements::EcdsaSighashType::All,
 	).expect("error doing sighash");
-	assert_eq!(buf.len(), 189 + bond_script.encoded_len(),
-		"covenant len {}", bond_script.encoded_len(),
-	);
+	assert_eq!(buf.len(), 189 + bond_script_len, "bond script len {}", bond_script_len);
 
 	// We want our signature to be 70 bytes, and we are lucky we can
 	// chose our own secret key here. There about a 50% chance the signature
@@ -400,12 +420,22 @@ fn push_v0_burn_covenant_items(
 	
 	// first we just take the major part of the first part.
 	let mut cur = Cursor::new(&buf);
-	let first_part = cur.take_bytes(4 + 32 + 32 + 36 + covenant_script_len + 8 + 4).unwrap();
+	// <version><prevouts><sequences><issuances><prevout><script-code><value><sequence>
+	let first_part = cur.take_bytes(4 + 32 + 32 + 32 + 36 + bond_script_len + 9 + 4).unwrap();
 	// then discard the 32-byte outputs hash, we're gonna create it
 	cur.seek(io::SeekFrom::Current(32)).unwrap();
+	// <locktime><sighashtype>
 	let last_part = cur.take_bytes(4 + 4).unwrap();
+	assert_eq!(cur.position() as usize, buf.len(), "bond script len: {}", bond_script_len);
 
-	witness.push(elements::encode::serialize(other_output));
+	let other_outputs_serialized = {
+		let mut buf = Vec::new();
+		for out in other_outputs {
+			elements::encode::Encodable::consensus_encode(out, &mut buf).unwrap();
+		}
+		buf
+	};
+	witness.push(other_outputs_serialized);
 	witness.push(first_part);
 	witness.push(last_part);
 	witness.push(signing_pk.serialize().to_vec());
@@ -427,6 +457,7 @@ pub fn create_burn_segwit_v0_bond_tx(
 	let spend1 = SpendDataV0::determine(secp, &spec.pubkey, tx1, double_spend_utxo)?;
 	let spend2 = SpendDataV0::determine(secp, &spec.pubkey, tx2, double_spend_utxo)?;
 
+	let asset = bond_utxo.output.asset.explicit().expect("need explicit UTXO");
 	let mut ret = elements::Transaction {
 		version: 2,
 		lock_time: elements::LockTime::ZERO,
@@ -445,17 +476,9 @@ pub fn create_burn_segwit_v0_bond_tx(
 			},
 		}],
 		output: vec![
+			burn_output(spec.bond_value, asset),
 			elements::TxOut {
-				asset: elements::confidential::Asset::Explicit(elements::AssetId::LIQUID_BTC),
-				value: elements::confidential::Value::Explicit(spec.bond_value.to_sat()),
-				nonce: elements::confidential::Nonce::Null,
-				script_pubkey: Builder::new()
-					.push_opcode(OP_RETURN)
-					.into_script(),
-				witness: elements::TxOutWitness::default(),
-			},
-			elements::TxOut {
-				asset: elements::confidential::Asset::Explicit(elements::AssetId::LIQUID_BTC),
+				asset: elements::confidential::Asset::Explicit(asset),
 				// will change this later
 				value: elements::confidential::Value::Explicit(0),
 				nonce: elements::confidential::Nonce::Null,
@@ -463,11 +486,11 @@ pub fn create_burn_segwit_v0_bond_tx(
 				witness: elements::TxOutWitness::default(),
 			},
 			// will change value later
-			elements::TxOut::new_fee(0, elements::AssetId::LIQUID_BTC),
+			elements::TxOut::new_fee(0, asset),
 		],
 	};
 
-	let (bond_script, bond_spk) = create_segwit_v0_bond_script(spec);
+	let (bond_script, bond_spk) = create_segwit_v0_bond_script(spec, asset);
 	assert_eq!(bond_utxo.output.script_pubkey, bond_spk,
 		"bond UTXO doesn't match expected bond scriptPubkey",
 	);
@@ -476,10 +499,12 @@ pub fn create_burn_segwit_v0_bond_tx(
 	let sc1_len = spend1.script_code.as_script().encoded_len();
 	let sc2_len = spend2.script_code.as_script().encoded_len();
 	let reward_len = reward_address.script_pubkey().encoded_len();
-	let total_tx_weight = 1680 + sc1_len + sc2_len + reward_len
-		+ BitcoinEncodableExt::encoded_len(&spend1.signature.to_vec())
-		+ BitcoinEncodableExt::encoded_len(&spend2.signature.to_vec())
-		+ bond_script.encoded_len();
+	let total_tx_weight = 1646 + sc1_len + sc2_len + reward_len
+		+ spend1.signature.sig.serialize_der().len()
+		+ spend2.signature.sig.serialize_der().len()
+		+ spec.lock_time.encoded_len()
+		+ bond_script.encoded_len()
+		+ &ret.output[1..].to_vec().encoded_len();
 	let fee = fee_rate * Weight::from_wu(total_tx_weight as u64);
 	let change = bond_utxo.output.value.explicit().unwrap() - spec.bond_value.to_sat() - fee.to_sat();
 	ret.output[2].value = elements::confidential::Value::Explicit(fee.to_sat());
@@ -487,14 +512,16 @@ pub fn create_burn_segwit_v0_bond_tx(
 
 	// create a nums key and sign the tx
 
-	let mut witness = Vec::with_capacity(6 + 6 + 5 + 1);
+	let mut witness = Vec::with_capacity(1 + 6 + 6 + 5 + 1);
+	witness.push(vec![1]); // this is the TRUE for the IF
+
 	spend1.push_segwit_v0_sighash_items(&mut witness);
 	spend2.push_segwit_v0_sighash_items(&mut witness);
 
 	push_v0_burn_covenant_items(
 		secp,
 		&mut witness,
-		&ret.output[1],
+		&ret.output[1..],
 		&ret,
 		&bond_script,
 		Amount::from_sat(bond_utxo.output.value.explicit().unwrap()),
@@ -505,16 +532,11 @@ pub fn create_burn_segwit_v0_bond_tx(
 	witness.reverse();
 
 	// finally add the witness script element
-	//TODO(stevenroose) doesn't need length prefix here, right?
-	// witness.push(elements::encode::serialize(&bond_script));
 	witness.push(bond_script.to_bytes());
 
 	ret.input[0].witness.script_witness = witness;
 
-	assert_eq!(ret.weight(), total_tx_weight,
-		"sc1: {}; sc2: {}, reward: {}, sig1: {}, sig2: {}", sc1_len, sc2_len, reward_len,
-		spend1.signature.to_vec().len(), spend2.signature.to_vec().len(),
-	);
+	assert_eq!(ret.weight(), total_tx_weight);
 	Ok(ret)
 }
 
@@ -526,6 +548,7 @@ pub fn create_reclaim_segwit_v0_bond_tx(
 	reclaim_sk: &SecretKey,
 	output_spk: &elements::Script,
 ) -> Result<elements::Transaction, &'static str> {
+	let asset = bond_utxo.output.asset.explicit().expect("need explicit UTXO");
 	let mut ret = elements::Transaction {
 		version: 2,
 		lock_time: spec.lock_time,
@@ -545,7 +568,7 @@ pub fn create_reclaim_segwit_v0_bond_tx(
 		}],
 		output: vec![
 			elements::TxOut {
-				asset: elements::confidential::Asset::Explicit(elements::AssetId::LIQUID_BTC),
+				asset: elements::confidential::Asset::Explicit(asset),
 				// will change this value later
 				value: elements::confidential::Value::Explicit(0),
 				nonce: elements::confidential::Nonce::Null,
@@ -553,11 +576,11 @@ pub fn create_reclaim_segwit_v0_bond_tx(
 				witness: elements::TxOutWitness::default(),
 			},
 			// will change this value later
-			elements::TxOut::new_fee(0, elements::AssetId::LIQUID_BTC),
+			elements::TxOut::new_fee(0, asset),
 		],
 	};
 
-	let (bond_script, bond_spk) = create_segwit_v0_bond_script(spec);
+	let (bond_script, bond_spk) = create_segwit_v0_bond_script(spec, asset);
 	assert_eq!(bond_utxo.output.script_pubkey, bond_spk,
 		"bond UTXO doesn't match expected bond scriptPubkey",
 	);
@@ -583,7 +606,7 @@ pub fn create_reclaim_segwit_v0_bond_tx(
 	ret.input[0].witness.script_witness.push(
 		bitcoin::ecdsa::Signature::sighash_all(sig).to_vec(),
 	);
-	ret.input[0].witness.script_witness.push(vec![OP_FALSE.into_u8()]);
+	ret.input[0].witness.script_witness.push(vec![]); // this is the FALSE for the IF
 	//TODO(stevenroose) doesn't need length prefix here, right?
 	//ret.input[0].witness.script_witness.push(elements::encode::serialize(&bond_script));
 	ret.input[0].witness.script_witness.push(bond_script.to_bytes());

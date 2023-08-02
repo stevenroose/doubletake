@@ -1,14 +1,16 @@
 
+#[macro_use]
+extern crate lazy_static;
 extern crate link_cplusplus;
 
 
 use std::str::FromStr;
 use std::sync::Arc;
 
-use bitcoin::{Amount, Denomination, FeeRate, Weight};
+use bitcoin::{Amount, Denomination, FeeRate};
 use bitcoin::hashes::Hash;
 use bitcoin::hashes::hex::FromHex;
-use bitcoin::secp256k1::{self, PublicKey, Secp256k1, SecretKey};
+use bitcoin::secp256k1::{self, Secp256k1, SecretKey};
 use bitcoin::secp256k1::rand::{self, Rng, SeedableRng};
 use jsonrpc::serde_json::json;
 use jsonrpc::serde_json::value::{Value, RawValue};
@@ -16,10 +18,14 @@ use jsonrpc::serde_json::value::{Value, RawValue};
 use doubletake::*;
 
 /// Test network params;
+
 static TEST_NET: &'static elements::AddressParams = &elements::AddressParams::ELEMENTS;
-static TEST_ASSETID: elements::AssetId = elements::AssetId::LIQUID_BTC;
-static TEST_ASSET: elements::confidential::Asset =
-	elements::confidential::Asset::Explicit(TEST_ASSETID);
+static TEST_ASSETID: &str = "b2e15d0d7a0c94e4e2ce0fe6e8691b9e451377f6e46e8045a86f7c4b5d4f0f23";
+lazy_static! {
+	static ref TEST_ASSET: elements::AssetId = TEST_ASSETID.parse().unwrap();
+	static ref TEST_CASSET: elements::confidential::Asset =
+		elements::confidential::Asset::Explicit(*TEST_ASSET);
+}
 
 
 fn arg(v: Value) -> Box<RawValue> {
@@ -41,14 +47,14 @@ fn main() {
 		Box<dyn Fn(&SegwitV0BondSpec, &ElementsUtxo, &elements::Transaction)>,
 	) = match std::env::args().nth(1) {
 		Some(s) if s == "elementsconsensus" => {
-			let deploy = Box::new(|addr: &_, amount| {
+			let deploy = Box::new(|_addr: &_, _amount| {
 				elements::OutPoint::new(
 					"0000000000000000000000000000000000000000000000000000000000000001".parse().unwrap(),
 					0,
 				)
 			});
 			let verify = Box::new(|spec: &_, utxo: &ElementsUtxo, tx: &_| {
-				let (script, _) = create_segwit_v0_bond_script(spec);
+				let (script, _) = create_segwit_v0_bond_script(spec, *TEST_ASSET);
 				verify_tx_elementsconsensus(&script, &utxo.output.value, 0, tx).expect("tx error");
 			});
 			(deploy, verify)
@@ -87,11 +93,14 @@ fn main() {
 				elements::OutPoint::new(txid, vout as u32)
 			});
 
-			let verify = Box::new(move |spec: &_, utxo: &ElementsUtxo, tx: &_| {
+			let verify = Box::new(move |_spec: &_, _utxo: &ElementsUtxo, tx: &_| {
 				let ret = client.call::<Value>("testmempoolaccept", &[
 					arg(json!([elements::encode::serialize_hex(tx)])),
 				]).unwrap();
-				println!("checkmempoolaccept: {:?}", ret);
+				println!("testmempoolaccept: {:?}", ret);
+				if *ret.as_array().unwrap()[0].as_object().unwrap().get("allowed").unwrap() != Value::Bool(true) {
+					panic!("tx not accepted: {:?}", ret);
+				}
 			});
 
 			(deploy, verify)
@@ -199,17 +208,18 @@ fn test_v0_with_random(
 	let (bond_sk, bond_pk) = secp.generate_keypair(rand);
 
 	// And generate a spec for our bond.
-	let expiry = 1722369854; // some unix timestamp
 	let (reclaim_sk, reclaim_pk) = secp.generate_keypair(rand);
 	let bond_spec = SegwitV0BondSpec {
 		pubkey: bond_pk.clone(),
 		bond_value: Amount::from_btc(5.0).unwrap(),
-		lock_time: elements::LockTime::from_time(expiry).unwrap(),
+		// use 1 locktime so that we can reclaim our bond already
+		lock_time: elements::LockTime::from_height(1).unwrap(),
+		// lock_time: elements::LockTime::from_time(1722369854).unwrap(),
 		reclaim_pubkey: reclaim_pk,
 	};
 
 	// Then we can create our bond script.
-	let (bond_script, bond_spk) = create_segwit_v0_bond_script(&bond_spec);
+	let (bond_script, bond_spk) = create_segwit_v0_bond_script(&bond_spec, *TEST_ASSET);
 	println!("bond script: {}", bond_script.asm());
 	let bond_addr = elements::Address::from_script(&bond_spk, None, TEST_NET).unwrap();
 	println!("bond addr: {}", bond_addr);
@@ -222,7 +232,7 @@ fn test_v0_with_random(
 		outpoint: bond_outpoint,
 		output: elements::TxOut {
 			value: expl(amount),
-			asset: TEST_ASSET,
+			asset: *TEST_CASSET,
 			nonce: elements::confidential::Nonce::Null,
 			script_pubkey: bond_addr.script_pubkey(),
 			witness: elements::TxOutWitness::default(),
@@ -289,7 +299,7 @@ fn test_v0_with_random(
 		bond_utxo.output.value.explicit().unwrap(),
 		reclaim_tx.output.iter().map(|o| o.value.explicit().unwrap()).sum::<u64>(),
 	);
-	// verify_tx(&bond_spec, &bond_utxo, &reclaim_tx);
+	verify_tx(&bond_spec, &bond_utxo, &reclaim_tx);
 }
 
 fn verify_tx_elementsconsensus(

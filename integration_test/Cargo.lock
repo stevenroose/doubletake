@@ -344,6 +344,7 @@ dependencies = [
  "elements-consensus",
  "hex-conservative",
  "jsonrpc",
+ "lazy_static",
  "link-cplusplus",
 ]
 
