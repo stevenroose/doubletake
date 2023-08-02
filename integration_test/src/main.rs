@@ -44,7 +44,7 @@ fn main() {
 
 	let (deploy, verify): (
 		Box<dyn Fn(&elements::Address, Amount) -> elements::OutPoint>,
-		Box<dyn Fn(&SegwitV0BondSpec, &ElementsUtxo, &elements::Transaction)>,
+		Box<dyn Fn(&doubletake::segwit::BondSpec, &ElementsUtxo, &elements::Transaction)>,
 	) = match std::env::args().nth(1) {
 		Some(s) if s == "elementsconsensus" => {
 			let deploy = Box::new(|_addr: &_, _amount| {
@@ -54,7 +54,7 @@ fn main() {
 				)
 			});
 			let verify = Box::new(|spec: &_, utxo: &ElementsUtxo, tx: &_| {
-				let (script, _) = create_segwit_v0_bond_script(spec, *TEST_ASSET);
+				let (script, _) = doubletake::segwit::create_bond_script(spec);
 				verify_tx_elementsconsensus(&script, &utxo.output.value, 0, tx).expect("tx error");
 			});
 			(deploy, verify)
@@ -200,7 +200,7 @@ fn test_v0_with_random(
 	secp: &Secp256k1<secp256k1::All>,
 	rand: &mut impl Rng,
 	deploy_bond: impl Fn(&elements::Address, Amount) -> elements::OutPoint,
-	verify_tx: impl Fn(&SegwitV0BondSpec, &ElementsUtxo, &elements::Transaction),
+	verify_tx: impl Fn(&doubletake::segwit::BondSpec, &ElementsUtxo, &elements::Transaction),
 ) {
 	//! A complete test that tests an entire bond setup, burn and expiration.
 
@@ -209,9 +209,10 @@ fn test_v0_with_random(
 
 	// And generate a spec for our bond.
 	let (reclaim_sk, reclaim_pk) = secp.generate_keypair(rand);
-	let bond_spec = SegwitV0BondSpec {
+	let bond_spec = doubletake::segwit::BondSpec {
 		pubkey: bond_pk.clone(),
 		bond_value: Amount::from_btc(5.0).unwrap(),
+		bond_asset: *TEST_ASSET,
 		// use 1 locktime so that we can reclaim our bond already
 		lock_time: elements::LockTime::from_height(1).unwrap(),
 		// lock_time: elements::LockTime::from_time(1722369854).unwrap(),
@@ -219,7 +220,7 @@ fn test_v0_with_random(
 	};
 
 	// Then we can create our bond script.
-	let (bond_script, bond_spk) = create_segwit_v0_bond_script(&bond_spec, *TEST_ASSET);
+	let (bond_script, bond_spk) = doubletake::segwit::create_bond_script(&bond_spec);
 	println!("bond script: {}", bond_script.asm());
 	let bond_addr = elements::Address::from_script(&bond_spk, None, TEST_NET).unwrap();
 	println!("bond addr: {}", bond_addr);
@@ -258,7 +259,7 @@ fn test_v0_with_random(
 
 	// So let's BURN!
 	let (_, reward_pk) = secp.generate_keypair(rand);
-	let burn_tx = create_burn_segwit_v0_bond_tx(
+	let burn_tx = doubletake::segwit::create_burn_tx(
 		secp,
 		&bond_utxo,
 		&bond_spec,
@@ -268,9 +269,6 @@ fn test_v0_with_random(
 		FeeRate::from_sat_per_vb(1).unwrap(),
 		elements::Address::p2wpkh(&bitcoin::PublicKey::new(reward_pk), None, TEST_NET),
 	).unwrap();
-	for (i, w) in burn_tx.input[0].witness.script_witness.iter().enumerate() {
-		println!("witness element {}: {}", i, hex_conservative::DisplayHex::as_hex(w));
-	}
 
 	println!("burn tx: {}", elements::encode::serialize_hex(&burn_tx));
 	println!("burn tx: in={}, out={}",
@@ -282,7 +280,7 @@ fn test_v0_with_random(
 	// Now try reclaim after the timelock
 
 	let output = elements::Address::from_str("ert1q76vrm2xyvjgl6g392srk5pwas44twu6rpd8tk5").unwrap();
-	let reclaim_tx = create_reclaim_segwit_v0_bond_tx(
+	let reclaim_tx = doubletake::segwit::create_reclaim_tx(
 		secp,
 		&bond_utxo,
 		&bond_spec,
@@ -290,9 +288,6 @@ fn test_v0_with_random(
 		&reclaim_sk,
 		&output.script_pubkey(),
 	).unwrap();
-	for (i, w) in reclaim_tx.input[0].witness.script_witness.iter().enumerate() {
-		println!("witness element {}: {}", i, hex_conservative::DisplayHex::as_hex(w));
-	}
 
 	println!("reclaim tx: {}", elements::encode::serialize_hex(&reclaim_tx));
 	println!("reclaim tx: in={}, out={}",

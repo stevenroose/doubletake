@@ -4,7 +4,7 @@ use std::io;
 use std::str::FromStr;
 
 use bitcoin::Amount;
-use bitcoin::secp256k1::SecretKey;
+use bitcoin::secp256k1::{PublicKey, SecretKey};
 use elements::AssetId;
 use elements::opcodes::all::*;
 use elements::script::Builder;
@@ -31,6 +31,16 @@ pub trait BuilderExt: Into<Builder> + From<Builder> {
 			.into()
 	}
 
+	/// Add a CLTV-encubered OP_CHECKSIGVERIFY for the given locktime and pubkey.
+	fn spend_with_locktime(self, pubkey: &PublicKey, lock_time: elements::LockTime) -> Self {
+		self.into()
+			.push_int(lock_time.to_consensus_u32() as i64)
+			.push_opcode(OP_CLTV)
+			.push_opcode(OP_DROP)
+			.push_slice(&pubkey.serialize())
+			.push_opcode(OP_CHECKSIGVERIFY)
+			.into()
+	}
 }
 
 impl BuilderExt for Builder {}

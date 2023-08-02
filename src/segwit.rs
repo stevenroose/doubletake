@@ -37,11 +37,7 @@ pub fn create_bond_script(
 	let script = Builder::new()
 		// first add the locktime clause for when the bond expires
 		.push_opcode(OP_NOTIF)
-		.push_int(spec.lock_time.to_consensus_u32() as i64)
-		.push_opcode(OP_CLTV)
-		.push_opcode(OP_DROP)
-		.push_slice(&spec.reclaim_pubkey.serialize())
-		.push_opcode(OP_CHECKSIGVERIFY)
+		.spend_with_locktime(&spec.reclaim_pubkey, spec.lock_time)
 		.push_opcode(OP_ELSE)
 
 		// check the two sighashes of the double spend
@@ -170,11 +166,7 @@ impl<'a> SpendData<'a> {
 		let mut buf = Vec::with_capacity(supposed_len);
 		let mut shc = bitcoin::sighash::SighashCache::new(tx);
 		shc.segwit_encode_signing_data_to(
-			&mut buf,
-			input_idx,
-			script_code,
-			input_value,
-			sighash_type,
+			&mut buf, input_idx, script_code, input_value, sighash_type,
 		).expect("error doing sighash");
 		assert_eq!(buf.len(), supposed_len);
 		buf
@@ -246,15 +238,15 @@ pub fn create_burn_tx(
 	);
 
 	// calculate the fee so we know what we can add a claim output
-	let sc1_len = spend1.script_code.as_script().encoded_len();
-	let sc2_len = spend2.script_code.as_script().encoded_len();
-	let reward_len = reward_address.script_pubkey().encoded_len();
-	let total_tx_weight = 1646 + sc1_len + sc2_len + reward_len
+	let total_tx_weight = 1645 // this value is just hardcoded all the fixed parts
+		+ spend1.script_code.as_script().encoded_len()
+		+ spend2.script_code.as_script().encoded_len()
+		+ reward_address.script_pubkey().encoded_len()
 		+ spend1.signature.sig.serialize_der().len()
 		+ spend2.signature.sig.serialize_der().len()
 		+ spec.lock_time.encoded_len()
 		+ bond_script.encoded_len()
-		+ &ret.output[1..].to_vec().encoded_len();
+		+ ret.output[1..].to_vec().encoded_len();
 	let fee = fee_rate * Weight::from_wu(total_tx_weight as u64);
 	let change = bond_utxo.output.value.explicit().unwrap() - spec.bond_value.to_sat() - fee.to_sat();
 	ret.output[2].value = elements::confidential::Value::Explicit(fee.to_sat());
@@ -268,13 +260,9 @@ pub fn create_burn_tx(
 	bitcoin_sighash::push_witness_items(&mut witness, &spend1);
 	bitcoin_sighash::push_witness_items(&mut witness, &spend2);
 
+	let input_amount = Amount::from_sat(bond_utxo.output.value.explicit().unwrap());
 	burn_covenant::push_witness_items(
-		secp,
-		&mut witness,
-		&ret.output[1..],
-		&ret,
-		&bond_script,
-		Amount::from_sat(bond_utxo.output.value.explicit().unwrap()),
+		secp, &mut witness, &ret.output[1..], &ret, &bond_script, input_amount,
 	);
 
 	// We added the elements in reverse, so let's reverse the stack
@@ -305,7 +293,7 @@ pub fn create_reclaim_tx(
 			previous_output: bond_utxo.outpoint,
 			is_pegin: false,
 			script_sig: elements::Script::new(), // segwit
-			sequence: elements::Sequence::ZERO,
+			sequence: elements::Sequence::ZERO, // to allow timelock
 			asset_issuance: elements::AssetIssuance::default(),
 			witness: elements::TxInWitness {
 				amount_rangeproof: None,
@@ -334,9 +322,9 @@ pub fn create_reclaim_tx(
 		"bond UTXO doesn't match expected bond scriptPubkey",
 	);
 	let max_tx_weight = ret.weight()
-		+ 8	  // non-empty witness
-		+ 1 + 72 //sig
-		+ 1 + 1  // OP_FALSE
+		+ 8	     // basic non-empty witness structure
+		+ 1 + 72 // signature
+		+ 1      // FALSE witness element
 		+ 1 + bond_script.encoded_len();
 	let fee = fee_rate * bitcoin::Weight::from_wu(max_tx_weight as u64);
 	let remaining = bond_utxo.output.value.explicit().unwrap() - fee.to_sat();
@@ -345,17 +333,18 @@ pub fn create_reclaim_tx(
 
 	let mut shc = elements::sighash::SighashCache::new(&mut ret);
 	let sighash = shc.segwitv0_sighash(
-		0,
-		&bond_script,
-		bond_utxo.output.value,
-		elements::EcdsaSighashType::All,
+		0, &bond_script, bond_utxo.output.value, elements::EcdsaSighashType::All,
 	);
 	let sig = secp.sign_ecdsa(&sighash.into(), &reclaim_sk);
 
+	// we only need push the signature since the pubkey is hardcoded, ofc
 	ret.input[0].witness.script_witness.push(
 		bitcoin::ecdsa::Signature::sighash_all(sig).to_vec(),
 	);
-	ret.input[0].witness.script_witness.push(vec![]); // this is the FALSE for the IF
+	// this is the FALSE value that make us go into the CLTV clause
+	ret.input[0].witness.script_witness.push(vec![]);
+
+	// add witnessScript at the end
 	ret.input[0].witness.script_witness.push(bond_script.to_bytes());
 
 	// Check that our calculation made sense.
@@ -454,6 +443,7 @@ pub mod bitcoin_sighash {
 		witness.push(cur.take_bytes(12 + scriptcode_len).unwrap());
 		witness.push(cur.take_bytes(32).unwrap());
 		witness.push(cur.take_bytes(8).unwrap());
+		assert_eq!(cur.position() as usize, sighash_data.len());
 		witness.push(spend_data.signature.sig.serialize_der().to_vec());
 	}
 }
@@ -536,19 +526,16 @@ pub mod burn_covenant {
 		other_outputs: &[elements::TxOut],
 		spending_tx: &elements::Transaction,
 		bond_script: &elements::Script,
-		total_amount: Amount,
+		input_amount: Amount,
 	) {
 		let mut shc = elements::sighash::SighashCache::new(spending_tx);
 		// we're going to write the sighash data to a buffer
 		// and break it into 5 pieces.
 		let bond_script_len = bond_script.encoded_len();
 		let mut buf = Vec::with_capacity(189 + bond_script_len);
+		let input_amount = elements::confidential::Value::Explicit(input_amount.to_sat());
 		shc.encode_segwitv0_signing_data_to(
-			&mut buf,
-			0,
-			bond_script,
-			elements::confidential::Value::Explicit(total_amount.to_sat()),
-			elements::EcdsaSighashType::All,
+			&mut buf, 0, bond_script, input_amount, elements::EcdsaSighashType::All,
 		).expect("error doing sighash");
 		assert_eq!(buf.len(), 189 + bond_script_len, "bond script len {}", bond_script_len);
 
