@@ -2,114 +2,16 @@
 
 
 
-use std::io;
 use std::str::FromStr;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use bitcoin::{Amount, FeeRate};
-use bitcoin::secp256k1::{self, PublicKey};
+use bitcoin::secp256k1;
 use elements::AssetId;
-use elements::encode::{Decodable, Encodable};
 use serde_json::json;
 use wasm_bindgen::prelude::*;
 
 use crate::{segwit, util};
-use crate::{BitcoinUtxo, ElementsUtxo, BondSpec};
-
-
-// #[derive(Debug, Clone)]
-// pub struct BitcoinUtxo {
-// 	pub outpoint: bitcoin::OutPoint,
-// 	pub output: bitcoin::TxOut,
-// }
-
-// /// A UTXO on the Liquid or an Elements network.
-// #[derive(Debug, Clone)]
-// pub struct ElementsUtxo {
-// 	pub outpoint: elements::OutPoint,
-// 	pub output: elements::TxOut,
-// }
-
-
-///// Specification of a bond.
-/////
-///// With this, a bond can be exactly reconstructed and this information is
-///// needed for all interactions with the bond.
-//#[derive(Debug, PartialEq, Eq)]
-//pub enum BondSpec {
-//	Segwit(segwit::BondSpec),
-//}
-
-///// This can go away once MR #172 lands in rust-elements.
-/////
-///// https://github.com/ElementsProject/rust-elements/pull/172
-//fn ioerr<T>(ret: Result<T, elements::encode::Error>) -> Result<T, io::Error> {
-//	match ret {
-//		Ok(v) => Ok(v),
-//		Err(elements::encode::Error::Io(e)) => Err(e),
-//		Err(other) => unreachable!("encode trait returned non-IO error: {}", other),
-//	}
-//}
-
-//impl BondSpec {
-//	/// The spec version byte for segwit v0 bonds.
-//	const VERSION_SEGWIT: u8 = 0;
-
-//	/// Max length of a serialized [BondSpec].
-//	const MAX_LEN: usize = 1 + 33 + 8 + 32 + 4 + 33;
-
-//	/// Serialize the spec into the writer.
-//	pub fn serialize_into(&self, mut w: impl io::Write) -> Result<(), io::Error> {
-//		match self {
-//			Self::Segwit(spec) => {
-//				w.write_all(&[Self::VERSION_SEGWIT])?;
-//				ioerr(spec.pubkey.consensus_encode(&mut w))?;
-//				ioerr(spec.bond_value.to_sat().consensus_encode(&mut w))?;
-//				ioerr(spec.bond_asset.consensus_encode(&mut w))?;
-//				ioerr(spec.lock_time.consensus_encode(&mut w))?;
-//				ioerr(spec.reclaim_pubkey.consensus_encode(&mut w))?;
-//			}
-//		}
-//		Ok(())
-//	}
-
-//	/// Serialize the spec to bytes.
-//	pub fn serialize(&self) -> Vec<u8> {
-//		let mut buf = Vec::with_capacity(Self::MAX_LEN);
-//		self.serialize_into(&mut buf).expect("vec has no IO errors");
-//		buf
-//	}
-
-//	/// Deserialize the spec from bytes.
-//	pub fn deserialize(mut r: impl io::Read) -> Result<Self, BondSpecParseError> {
-//		let mut buf = [0u8; 1];
-//		r.read_exact(&mut buf[0..1])?;
-//		let version = buf[0];
-//		match version {
-//			0 => {
-//				Ok(Self::Segwit(segwit::BondSpec {
-//					pubkey: Decodable::consensus_decode(&mut r)?,
-//					bond_value: Amount::from_sat(Decodable::consensus_decode(&mut r)?),
-//					bond_asset: Decodable::consensus_decode(&mut r)?,
-//					lock_time: Decodable::consensus_decode(&mut r)?,
-//					reclaim_pubkey: Decodable::consensus_decode(&mut r)?,
-//				}))
-//			}
-//			v => return Err(BondSpecParseError::BadVersion(v)),
-//		}
-//	}
-
-//	/// Serialize the spec to a base64 string.
-//	pub fn to_base64(&self) -> String {
-//		base64::encode_config(&self.serialize(), base64::URL_SAFE)
-//	}
-
-//	/// Deserialize the spec from a base64 string.
-//	pub fn from_base64(s: &str) -> Result<Self, BondSpecParseError> {
-//		let b = base64::decode_config(s, base64::URL_SAFE).map_err(BondSpecParseError::Base64)?;
-//		Ok(Self::deserialize(&b[..])?)
-//	}
-//}
+use crate::BondSpec;
 
 
 fn parse_elements_network(s: &str) -> Result<&'static elements::AddressParams, String> {
@@ -132,6 +34,14 @@ fn lock_time_from_unix(secs: u64) -> Result<elements::LockTime, String> {
 	let secs_u32 = secs.try_into().map_err(|_| "timelock overflow")?;
 	Ok(elements::LockTime::from_time(secs_u32).map_err(|e| format!("invalid timelock: {}", e))?)
 }
+
+/// Deserialize an elements object from hex.
+fn elem_deserialize_hex<T: elements::encode::Decodable>(hex: &str) -> Result<T, String> {
+	let mut iter = hex_conservative::HexToBytesIter::new(hex)
+		.map_err(|e| format!("invalid hex string: {}", e))?;
+	Ok(T::consensus_decode(&mut iter).map_err(|e| format!("decoding failed: {}", e))?)
+}
+
 
 /// Create a segwit bond and address.
 ///
@@ -161,7 +71,7 @@ pub fn create_segwit_bond_address(
 		bond_value: Amount::from_sat(bond_value_sat),
 		bond_asset: parse_asset_id(bond_asset)?,
 		lock_time: lock_time_from_unix(lock_time_unix)?,
-		reclaim_pubkey: pubkey.parse().map_err(|e| format!("invalid pubkey: {}", e))?,
+		reclaim_pubkey: reclaim_pubkey.parse().map_err(|e| format!("invalid pubkey: {}", e))?,
 	};
 	let (_, spk) = segwit::create_bond_script(&spec);
 	let addr = elements::Address::from_script(&spk, None, network).expect("legit script");
@@ -171,14 +81,6 @@ pub fn create_segwit_bond_address(
 		"address": addr.to_string(),
 	})).unwrap())
 }
-
-/// Deserialize an elements object from hex.
-fn elem_deserialize_hex<T: elements::encode::Decodable>(hex: &str) -> Result<T, String> {
-	let mut iter = hex_conservative::HexToBytesIter::new(hex)
-		.map_err(|e| format!("invalid hex string: {}", e))?;
-	Ok(T::consensus_decode(&mut iter).map_err(|e| format!("decoding failed: {}", e))?)
-}
-
 
 /// Create a transaction to burn a bond.
 ///

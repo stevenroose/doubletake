@@ -1,23 +1,23 @@
 [package]
 name = "doubletake"
-version = "0.0.0-alpha.2"
+version = "0.0.0-alpha.3"
 license = "CC0-1.0"
 edition = "2021"
 authors = [ "Steven Roose <steven@roose.io>", "James Dorfman" ]
 description = "A library and CLI tool for creating Bitcoin double spend prevention bonds on Liquid"
 
 
-[features]
-default = []
-wasm = ["wasm-bindgen", "serde", "serde_json", "serde-wasm-bindgen", "getrandom/js"]
-serde = ["dep:serde", "bitcoin/serde", "elements/serde"]
-
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[features]
+default = []
+serde = ["dep:serde", "bitcoin/serde", "elements/serde"]
+wasm = ["wasm-bindgen", "serde", "serde_json", "serde-wasm-bindgen", "getrandom/js"]
+
 [dependencies]
 base64 = "0.13.0"
-bitcoin = { version = "0.30.1", features = [ "rand" ] }
+bitcoin = "0.30.1"
 elements = "0.23.0"
 getrandom = "0.2"
 hex-conservative = "0.1.1"
