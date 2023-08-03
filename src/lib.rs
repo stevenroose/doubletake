@@ -1,10 +1,16 @@
 
+#[cfg(feature = "serde")]
+#[macro_use]
+extern crate serde;
 
 mod util;
 pub mod segwit;
 
+#[cfg(feature = "wasm")]
+mod ffi;
 
-use std::io;
+
+use std::{fmt, io};
 
 use bitcoin::{Amount, FeeRate};
 use bitcoin::secp256k1::{self, PublicKey};
@@ -14,6 +20,7 @@ use elements::encode::{Decodable, Encodable};
 
 /// A UTXO on the Bitcoin network.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct BitcoinUtxo {
 	pub outpoint: bitcoin::OutPoint,
 	pub output: bitcoin::TxOut,
@@ -21,6 +28,7 @@ pub struct BitcoinUtxo {
 
 /// A UTXO on the Liquid or an Elements network.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct ElementsUtxo {
 	pub outpoint: elements::OutPoint,
 	pub output: elements::TxOut,
@@ -43,6 +51,17 @@ impl From<io::Error> for BondSpecParseError {
 impl From<elements::encode::Error> for BondSpecParseError {
 	fn from(e: elements::encode::Error) -> BondSpecParseError {
 		BondSpecParseError::Format(e)
+	}
+}
+
+impl fmt::Display for BondSpecParseError {
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+		match self {
+			Self::Io(e) => write!(f, "I/O error: {}", e),
+			Self::Format(e) => write!(f, "encoding error: {}", e),
+			Self::Base64(e) => write!(f, "invalid base64: {}", e),
+			Self::BadVersion(v) => write!(f, "invalid spec version number: {}", v),
+		}
 	}
 }
 

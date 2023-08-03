@@ -544,10 +544,12 @@ pub mod burn_covenant {
 		// is 70 bytes, so let's just brute force it.
 		let sign_msg = secp256k1::Message::from_hashed_data::<elements::Sighash>(&buf);
 		let (signing_pk, signature) = loop {
-			let (sk, pk) = secp.generate_keypair(&mut secp256k1::rand::thread_rng());
-			let sig = secp.sign_ecdsa(&sign_msg, &sk);
+			let mut buf = [0u8; 32];
+			getrandom::getrandom(&mut buf[..]).expect("error getting randomness");
+			let pair = secp256k1::KeyPair::from_seckey_slice(&secp, &buf[..]).unwrap();
+			let sig = secp.sign_ecdsa(&sign_msg, &pair.secret_key());
 			if sig.serialize_der().len() == 70 {
-				break (pk, sig);
+				break (pair.public_key(), sig);
 			}
 		};
 		

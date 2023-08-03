@@ -224,6 +224,7 @@ dependencies = [
  "base64",
  "bitcoin 0.30.1",
  "elements 0.23.0",
+ "getrandom",
  "hex-conservative",
 ]
 
