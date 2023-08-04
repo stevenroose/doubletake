@@ -267,7 +267,7 @@ fn test_v0_with_random(
 		&spend1,
 		&spend2,
 		FeeRate::from_sat_per_vb(1).unwrap(),
-		elements::Address::p2wpkh(&bitcoin::PublicKey::new(reward_pk), None, TEST_NET),
+		&elements::Address::p2wpkh(&bitcoin::PublicKey::new(reward_pk), None, TEST_NET),
 	).unwrap();
 
 	println!("burn tx: {}", elements::encode::serialize_hex(&burn_tx));
