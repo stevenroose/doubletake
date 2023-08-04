@@ -5,42 +5,13 @@
 use std::str::FromStr;
 
 use bitcoin::{Amount, FeeRate};
-use bitcoin::secp256k1;
+use bitcoin::secp256k1::SecretKey;
 use elements::AssetId;
 use serde_json::json;
 use wasm_bindgen::prelude::*;
 
-use crate::{segwit, util};
 use crate::BondSpec;
 
-
-fn parse_elements_network(s: &str) -> Result<&'static elements::AddressParams, String> {
-	match s {
-		"liquid" => Ok(&elements::AddressParams::LIQUID),
-		"liquidtestnet" => Ok(&elements::AddressParams::LIQUID_TESTNET),
-		"elements" => Ok(&elements::AddressParams::ELEMENTS),
-		_ => Err("invalid network")?,
-	}
-}
-
-fn parse_asset_id(s: &str) -> Result<AssetId, String> {
-	match s {
-		"lbtc" => Ok(AssetId::LIQUID_BTC),
-		_ => Ok(AssetId::from_str(s).map_err(|_| "invalid asset id")?),
-	}
-}
-
-fn lock_time_from_unix(secs: u64) -> Result<elements::LockTime, String> {
-	let secs_u32 = secs.try_into().map_err(|_| "timelock overflow")?;
-	Ok(elements::LockTime::from_time(secs_u32).map_err(|e| format!("invalid timelock: {}", e))?)
-}
-
-/// Deserialize an elements object from hex.
-fn elem_deserialize_hex<T: elements::encode::Decodable>(hex: &str) -> Result<T, String> {
-	let mut iter = hex_conservative::HexToBytesIter::new(hex)
-		.map_err(|e| format!("invalid hex string: {}", e))?;
-	Ok(T::consensus_decode(&mut iter).map_err(|e| format!("decoding failed: {}", e))?)
-}
 
 
 /// Create a segwit bond and address.
@@ -66,16 +37,15 @@ pub fn create_segwit_bond_address(
 	reclaim_pubkey: &str,
 ) -> Result<JsValue, JsValue> {
 	let network = parse_elements_network(network)?;
-	let spec = segwit::BondSpec {
-		pubkey: pubkey.parse().map_err(|e| format!("invalid pubkey: {}", e))?,
-		bond_value: Amount::from_sat(bond_value_sat),
-		bond_asset: parse_asset_id(bond_asset)?,
-		lock_time: lock_time_from_unix(lock_time_unix)?,
-		reclaim_pubkey: reclaim_pubkey.parse().map_err(|e| format!("invalid pubkey: {}", e))?,
-	};
-	let (_, spk) = segwit::create_bond_script(&spec);
-	let addr = elements::Address::from_script(&spk, None, network).expect("legit script");
-	let spec = BondSpec::Segwit(spec);
+	let pubkey = pubkey.parse().map_err(|e| format!("invalid pubkey: {}", e))?;
+	let bond_value = Amount::from_sat(bond_value_sat);
+	let bond_asset = parse_asset_id(bond_asset)?;
+	let locktime = lock_time_from_unix(lock_time_unix)?;
+	let reclaim_pubkey = reclaim_pubkey.parse().map_err(|e| format!("invalid pubkey: {}", e))?;
+
+	let (spec, addr) = crate::create_segwit_bond_address(
+		network, pubkey, bond_value, bond_asset, locktime, reclaim_pubkey,
+	);
 	Ok(serde_wasm_bindgen::to_value(&json!({
 		"spec": spec.to_base64(),
 		"address": addr.to_string(),
@@ -104,7 +74,6 @@ pub fn create_burn_tx(
 	fee_rate_sat_per_vb: u64,
 	reward_address: &str,
 ) -> Result<String, JsValue> {
-	let secp = secp256k1::Secp256k1::new();
 	let utxo = serde_wasm_bindgen::from_value(utxo)
 		.map_err(|e| format!("invalid bond UTXO: {}", e))?;
 	let spec = BondSpec::from_base64(spec_base64)
@@ -120,13 +89,9 @@ pub fn create_burn_tx(
 	let reward_address = elements::Address::from_str(reward_address)
 		.map_err(|e| format!("invalid reward address: {}", e))?;
 
-	let tx = match spec {
-		BondSpec::Segwit(spec) => {
-			segwit::create_burn_tx(
-				&secp, &utxo, &spec, &double_spend_utxo, &tx1, &tx2, fee_rate, reward_address,
-			)?
-		}
-	};
+	let tx = crate::create_burn_tx(
+		&utxo, &spec, &double_spend_utxo, &tx1, &tx2, fee_rate, &reward_address,
+	)?;
 	Ok(elements::encode::serialize_hex(&tx))
 }
 
@@ -148,22 +113,64 @@ pub fn create_reclaim_tx(
 	reclaim_sk: &str,
 	claim_address: &str,
 ) -> Result<String, JsValue> {
-	let secp = secp256k1::Secp256k1::new();
 	let utxo = serde_wasm_bindgen::from_value(utxo)
 		.map_err(|e| format!("invalid bond UTXO: {}", e))?;
 	let spec = BondSpec::from_base64(spec_base64)
 		.map_err(|e| format!("invalid spec: {}", e))?;
 	let fee_rate = FeeRate::from_sat_per_vb(fee_rate_sat_per_vb).ok_or_else(|| "invalid feerate")?;
-	let reclaim_sk = util::parse_secret_key(reclaim_sk)?;
+	let reclaim_sk = parse_secret_key(reclaim_sk)?;
 	let claim_address = elements::Address::from_str(claim_address)
 		.map_err(|e| format!("invalid reward address: {}", e))?;
 
-	let tx = match spec {
-		BondSpec::Segwit(spec) => {
-			segwit::create_reclaim_tx(
-				&secp, &utxo, &spec, fee_rate, &reclaim_sk, &claim_address.script_pubkey(),
-			)?
-		}
-	};
+	let tx = crate::create_reclaim_tx(&utxo, &spec, fee_rate, &reclaim_sk, &claim_address)?;
 	Ok(elements::encode::serialize_hex(&tx))
 }
+
+/// Deserialize an elements object from hex.
+pub fn elem_deserialize_hex<T: elements::encode::Decodable>(hex: &str) -> Result<T, String> {
+	let mut iter = hex_conservative::HexToBytesIter::new(hex)
+		.map_err(|e| format!("invalid hex string: {}", e))?;
+	Ok(T::consensus_decode(&mut iter).map_err(|e| format!("decoding failed: {}", e))?)
+}
+
+/// Parse a secret key from a string.
+/// Supports both WIF format and hexadecimal.
+pub fn parse_secret_key(s: &str) -> Result<SecretKey, String> {
+	if let Ok(k) = bitcoin::PrivateKey::from_str(&s) {
+		Ok(k.inner)
+	} else {
+		Ok(SecretKey::from_str(&s).map_err(|_| "invalid secret key")?)
+	}
+}
+
+/// Parse an Elements network address params identifier from string.
+///
+/// Values supported:
+/// - "liquid"
+/// - "liquidtestnet"
+/// - "elements"
+pub fn parse_elements_network(s: &str) -> Result<&'static elements::AddressParams, String> {
+	match s {
+		"liquid" => Ok(&elements::AddressParams::LIQUID),
+		"liquidtestnet" => Ok(&elements::AddressParams::LIQUID_TESTNET),
+		"elements" => Ok(&elements::AddressParams::ELEMENTS),
+		_ => Err("invalid network")?,
+	}
+}
+
+/// Parse an Elements asset ID from hex.
+///
+/// Special case: "lbtc".
+pub fn parse_asset_id(s: &str) -> Result<AssetId, String> {
+	match s {
+		"lbtc" => Ok(AssetId::LIQUID_BTC),
+		_ => Ok(AssetId::from_str(s).map_err(|_| "invalid asset id")?),
+	}
+}
+
+/// Convert a UNIX timestamp in seconds to a valid [LockTime] value.
+pub fn lock_time_from_unix(secs: u64) -> Result<elements::LockTime, String> {
+	let secs_u32 = secs.try_into().map_err(|_| "timelock overflow")?;
+	Ok(elements::LockTime::from_time(secs_u32).map_err(|e| format!("invalid timelock: {}", e))?)
+}
+

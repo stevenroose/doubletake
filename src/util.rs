@@ -1,10 +1,9 @@
 
 
 use std::io;
-use std::str::FromStr;
 
 use bitcoin::Amount;
-use bitcoin::secp256k1::{PublicKey, SecretKey};
+use bitcoin::secp256k1::PublicKey;
 use elements::AssetId;
 use elements::opcodes::all::*;
 use elements::script::Builder;
@@ -89,13 +88,3 @@ pub trait ReadExt: io::Read {
 	}
 }
 impl<T: AsRef<[u8]>> ReadExt for io::Cursor<T> {}
-
-/// Parse a secret key from a string.
-/// Supports both WIF format and hexadecimal.
-pub fn parse_secret_key(s: &str) -> Result<SecretKey, String> {
-	if let Ok(k) = bitcoin::PrivateKey::from_str(&s) {
-		Ok(k.inner)
-	} else {
-		Ok(SecretKey::from_str(&s).map_err(|_| "invalid secret key")?)
-	}
-}

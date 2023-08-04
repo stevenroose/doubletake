@@ -193,7 +193,7 @@ pub fn create_burn_tx(
 	tx1: &bitcoin::Transaction,
 	tx2: &bitcoin::Transaction,
 	fee_rate: FeeRate,
-	reward_address: elements::Address,
+	reward_address: &elements::Address,
 ) -> Result<elements::Transaction, &'static str> {
 	// We start by actually finding our double spend.
 

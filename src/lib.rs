@@ -13,7 +13,7 @@ mod ffi;
 use std::{fmt, io};
 
 use bitcoin::{Amount, FeeRate};
-use bitcoin::secp256k1::{self, PublicKey};
+use bitcoin::secp256k1::{self, PublicKey, SecretKey};
 use elements::AssetId;
 use elements::encode::{Decodable, Encodable};
 
@@ -167,11 +167,10 @@ pub fn create_burn_tx(
 	double_spend_utxo: &BitcoinUtxo,
 	tx1: &bitcoin::Transaction,
 	tx2: &bitcoin::Transaction,
-	fee_rate_sat_per_vb: u64,
-	reward_address: elements::Address,
+	fee_rate: FeeRate,
+	reward_address: &elements::Address,
 ) -> Result<elements::Transaction, String> {
 	let secp = secp256k1::Secp256k1::new();
-	let fee_rate = FeeRate::from_sat_per_vb(fee_rate_sat_per_vb).ok_or_else(|| "invalid feerate")?;
 	let tx = match spec {
 		BondSpec::Segwit(spec) => {
 			segwit::create_burn_tx(
@@ -185,13 +184,11 @@ pub fn create_burn_tx(
 pub fn create_reclaim_tx(
 	utxo: &ElementsUtxo,
 	spec: &BondSpec,
-	fee_rate_sat_per_vb: u64,
-	reclaim_sk_str: &str,
-	claim_address: elements::Address,
+	fee_rate: FeeRate,
+	reclaim_sk: &SecretKey,
+	claim_address: &elements::Address,
 ) -> Result<elements::Transaction, String> {
 	let secp = secp256k1::Secp256k1::new();
-	let fee_rate = FeeRate::from_sat_per_vb(fee_rate_sat_per_vb).ok_or_else(|| "invalid feerate")?;
-	let reclaim_sk = util::parse_secret_key(reclaim_sk_str)?;
 	let tx = match spec {
 		BondSpec::Segwit(spec) => {
 			segwit::create_reclaim_tx(
