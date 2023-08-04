@@ -3,6 +3,9 @@ doubletake
 
 A tool for creating Bitcoin double-spend punishment bonds on Liquid.
 
+**WARNING**: Don't use this tool for real use cases yet. There are still a few
+known shortcomings in the design that make the bond circumventable.
+
 
 # How it works
 
@@ -71,3 +74,18 @@ To build for WASM, use the `wasm` feature.
 ```
 $ wasm-pack build --target web -- --features wasm
 ```
+
+
+# Observations
+
+Currently we only support segwit v0 spends. This means that any segwit v0 spend
+done by the given pubkey, should be covered. This means p2wpkh and p2wsh.
+
+Also, our implementation should be robust enough that any sighash flags should
+be supported. So if you hold an unconfirmed spend of an output with any sighash
+flags, you will be able to burn the bond if any other kind of spend is done
+using another sighash flag.
+
+This becomes a lot harder with taproot, where the sighash structure changes
+significantly depending on the sighash flags used. The taproot version
+is still a work in progress.

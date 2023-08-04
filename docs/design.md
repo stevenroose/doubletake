@@ -1,6 +1,7 @@
 
 
 
+# segwit v0
 
 
 ## segwit sighash structure
