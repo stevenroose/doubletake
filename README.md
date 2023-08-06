@@ -7,13 +7,13 @@ A tool for creating Bitcoin double-spend punishment bonds on Liquid.
 # How it works
 
 This tool will allow you to create a bond on Liquid where you lock up some money
-for a limited amount of time and that anyone can burn if they proof that you
+for a limited amount of time and that anyone can burn if they prove that you
 have attempted a double spend on Bitcoin with the public key tied to the bond.
 
-To start, you need to specidy which public key you want to create a bond for.
+To start, you need to specify which public key you want to create a bond for.
 
 Note that a bond can only work for either segwit v0 **OR** taproot, not for both.
-Also, currently only segwit is supported.
+Also, currently, only segwit is supported.
 
 
 ## CLI
