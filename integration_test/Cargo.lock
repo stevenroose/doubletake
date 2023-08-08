@@ -479,6 +479,7 @@ name = "integration_test"
 version = "0.1.0"
 dependencies = [
  "bitcoin 0.30.1",
+ "clap 4.3.19",
  "doubletake",
  "elements 0.23.0",
  "elements-consensus",
@@ -486,6 +487,7 @@ dependencies = [
  "jsonrpc",
  "lazy_static",
  "link-cplusplus",
+ "serde",
 ]
 
 [[package]]

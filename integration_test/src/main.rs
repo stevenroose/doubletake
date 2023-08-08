@@ -4,18 +4,55 @@ extern crate lazy_static;
 extern crate link_cplusplus;
 
 
+use std::collections::HashMap;
 use std::str::FromStr;
-use std::sync::Arc;
 
 use bitcoin::{Amount, Denomination, FeeRate};
 use bitcoin::hashes::Hash;
 use bitcoin::hashes::hex::FromHex;
 use bitcoin::secp256k1::{self, Secp256k1, SecretKey};
 use bitcoin::secp256k1::rand::{self, Rng, SeedableRng};
-use jsonrpc::serde_json::json;
+use clap::Parser;
 use jsonrpc::serde_json::value::{Value, RawValue};
+use serde;
 
 use doubletake::*;
+
+#[derive(Debug, Parser)]
+struct Opts {
+	/// Use an elementsregtest node to do tx validation.
+	///
+	/// Assumes the node's wallet has sufficient balance.
+	#[arg(long)]
+	regtest: bool,
+	#[arg(long, default_value = "7040")]
+	regtest_port: u16,
+	#[arg(long)]
+	regtest_user: Option<String>,
+	#[arg(long)]
+	regtest_pass: Option<String>,
+
+	/// Use libelementsconsensus to do consensus validation.
+	///
+	/// This currently doesn't work.
+	#[arg(long)]
+	elementsconsensus: bool,
+}
+
+lazy_static! {
+	static ref OPT: Opts = Opts::parse();
+	static ref RPC: Option<jsonrpc::Client> = {
+		if OPT.regtest {
+			Some(jsonrpc::Client::simple_http(
+				&format!("http://localhost:{}", OPT.regtest_port),
+				Some(OPT.regtest_user.clone().expect("need --rpc-user")),
+				Some(OPT.regtest_pass.clone().expect("need --rpc-pass")),
+			).expect("error creating regtest RPC client"))
+		} else {
+			None
+		}
+	};
+}
 
 /// Test network params;
 
@@ -27,95 +64,58 @@ lazy_static! {
 		elements::confidential::Asset::Explicit(*TEST_ASSET);
 }
 
-
-fn arg(v: Value) -> Box<RawValue> {
+/// Used to prepare RPC arguments.
+fn arg(v: impl serde::Serialize) -> Box<RawValue> {
 	let s = jsonrpc::serde_json::to_string(&v).unwrap();
 	RawValue::from_string(s.into()).unwrap()
 }
 
-fn main() {
-	let secp = Secp256k1::new();
+fn deploy_bond(addr: &elements::Address, value: Amount) -> elements::OutPoint {
+	if let Some(ref rpc) = *RPC {
+		let txid = rpc.call::<elements::Txid>("sendtoaddress", &[
+			arg(addr.to_string()),
+			arg(value.to_string_in(Denomination::Bitcoin)),
+		]).unwrap();
+		let tx_hex = rpc.call::<String>("getrawtransaction", &[
+			arg(txid.to_string()),
+		]).unwrap();
+		println!("bond deploy tx: {}", tx_hex);
+		let tx = elements::encode::deserialize::<elements::Transaction>(
+			&Vec::<u8>::from_hex(&tx_hex).unwrap(),
+		).unwrap();
+		let vout = tx.output.iter().position(|o| {
+			if o.script_pubkey == addr.script_pubkey() {
+				assert_eq!(o.value.explicit().unwrap(), value.to_sat());
+				true
+			} else {
+				false
+			}
+		}).unwrap();
+		elements::OutPoint::new(txid, vout as u32)
+	} else {
+		"0000000000000000000000000000000000000000000000000000000000000001:0".parse().unwrap()
+	}
+}
 
-	// First run we do with deterministic randomness.
-	let mut rand = rand::rngs::StdRng::from_seed([
-		1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
-	]);
+fn verify_tx(
+	spec: &doubletake::segwit::BondSpec,
+	utxo: &ElementsUtxo,
+	tx: &elements::Transaction,
+) {
+	if OPT.elementsconsensus {
+		let (script, _) = doubletake::segwit::create_bond_script(spec);
+		verify_tx_elementsconsensus(&script, &utxo.output.value, 0, tx).expect("tx error");
+	}
 
-	let (deploy, verify): (
-		Box<dyn Fn(&elements::Address, Amount) -> elements::OutPoint>,
-		Box<dyn Fn(&doubletake::segwit::BondSpec, &ElementsUtxo, &elements::Transaction)>,
-	) = match std::env::args().nth(1) {
-		Some(s) if s == "elementsconsensus" => {
-			let deploy = Box::new(|_addr: &_, _amount| {
-				elements::OutPoint::new(
-					"0000000000000000000000000000000000000000000000000000000000000001".parse().unwrap(),
-					0,
-				)
-			});
-			let verify = Box::new(|spec: &_, utxo: &ElementsUtxo, tx: &_| {
-				let (script, _) = doubletake::segwit::create_bond_script(spec);
-				verify_tx_elementsconsensus(&script, &utxo.output.value, 0, tx).expect("tx error");
-			});
-			(deploy, verify)
+	if let Some(ref rpc) = *RPC {
+		let ret = rpc.call::<Vec<HashMap<String, Value>>>("testmempoolaccept", &[
+			arg(&[elements::encode::serialize_hex(tx)]),
+		]).unwrap();
+		println!("testmempoolaccept: {:?}", ret);
+		if *ret[0].get("allowed").unwrap() != Value::Bool(true) {
+			panic!("tx not accepted: {:?}", ret);
 		}
-		Some(s) if s == "regtest" => {
-			let client = Arc::new(jsonrpc::Client::simple_http(
-				"http://localhost:8888",
-				Some("testuser".into()),
-				Some("testpass".into()),
-			).unwrap());
-
-			let balance = client.call::<Value>("getbalance", &[]).unwrap();
-			println!("{:?}", balance);
-
-			let client2 = client.clone();
-			let deploy = Box::new(move |addr: &elements::Address, amount: Amount| {
-				let txid = client2.call::<elements::Txid>("sendtoaddress", &[
-					arg(json!(addr.to_string())),
-					arg(json!(amount.to_string_in(Denomination::Bitcoin))),
-				]).unwrap();
-				let tx_hex = client2.call::<String>("getrawtransaction", &[
-					arg(json!(txid.to_string())),
-				]).unwrap();
-				println!("bond deploy tx: {}", tx_hex);
-				let tx = elements::encode::deserialize::<elements::Transaction>(
-					&Vec::<u8>::from_hex(&tx_hex).unwrap(),
-				).unwrap();
-				let vout = tx.output.iter().position(|o| {
-					if o.script_pubkey == addr.script_pubkey() {
-						assert_eq!(o.value.explicit().unwrap(), amount.to_sat());
-						true
-					} else {
-						false
-					}
-				}).unwrap();
-				elements::OutPoint::new(txid, vout as u32)
-			});
-
-			let verify = Box::new(move |_spec: &_, _utxo: &ElementsUtxo, tx: &_| {
-				let ret = client.call::<Value>("testmempoolaccept", &[
-					arg(json!([elements::encode::serialize_hex(tx)])),
-				]).unwrap();
-				println!("testmempoolaccept: {:?}", ret);
-				if *ret.as_array().unwrap()[0].as_object().unwrap().get("allowed").unwrap() != Value::Bool(true) {
-					panic!("tx not accepted: {:?}", ret);
-				}
-			});
-
-			(deploy, verify)
-		},
-		_ => panic!("must either provide libelementsconsensus or regtest argument"),
-	};
-
-
-	test_v0_with_random(&secp, &mut rand, &deploy, &verify);
-
-	// // Then we do a bunch of rounds with actual randomness.
-	// let mut rand = rand::thread_rng();
-	// for _ in 0..1000 {
-	// 	test_v0_with_random(&secp, &mut rand, &deploy, &verify);
-	// }
+	}
 }
 
 /// Generate sane random variables from a randomness source.
@@ -199,8 +199,6 @@ fn create_p2wpkh_spend_with_key(
 fn test_v0_with_random(
 	secp: &Secp256k1<secp256k1::All>,
 	rand: &mut impl Rng,
-	deploy_bond: impl Fn(&elements::Address, Amount) -> elements::OutPoint,
-	verify_tx: impl Fn(&doubletake::segwit::BondSpec, &ElementsUtxo, &elements::Transaction),
 ) {
 	//! A complete test that tests an entire bond setup, burn and expiration.
 
@@ -271,8 +269,10 @@ fn test_v0_with_random(
 	).unwrap();
 
 	println!("burn tx: {}", elements::encode::serialize_hex(&burn_tx));
-	println!("burn tx witness element sizes: {:?}",
-		burn_tx.input[0].witness.script_witness.iter().map(|i| i.len()).collect::<Vec<_>>());
+	println!("burn tx witness element sizes (n={}): {:?}",
+		burn_tx.input[0].witness.script_witness.len(),
+		burn_tx.input[0].witness.script_witness.iter().map(|i| i.len()).collect::<Vec<_>>(),
+	);
 	verify_tx(&bond_spec, &bond_utxo, &burn_tx);
 
 	// Now try reclaim after the timelock
@@ -288,8 +288,10 @@ fn test_v0_with_random(
 	).unwrap();
 
 	println!("reclaim tx: {}", elements::encode::serialize_hex(&reclaim_tx));
-	println!("reclaim tx witness element sizes: {:?}",
-		reclaim_tx.input[0].witness.script_witness.iter().map(|i| i.len()).collect::<Vec<_>>());
+	println!("reclaim tx witness element sizes (n={}): {:?}",
+		reclaim_tx.input[0].witness.script_witness.len(),
+		reclaim_tx.input[0].witness.script_witness.iter().map(|i| i.len()).collect::<Vec<_>>(),
+	);
 	verify_tx(&bond_spec, &bond_utxo, &reclaim_tx);
 }
 
@@ -308,4 +310,31 @@ fn verify_tx_elementsconsensus(
 		index,
 		&deserialize(&serialize(transaction)).unwrap(),
 	).expect("index error")
+}
+
+fn main() {
+	let secp = Secp256k1::new();
+
+	if !OPT.regtest && !OPT.elementsconsensus {
+		panic!("provide either --regtest or --elementsconsensus, otherwise you're doing nothing");
+	}
+
+	// First run we do with deterministic randomness.
+	let mut rand = rand::rngs::StdRng::from_seed([
+		1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
+	]);
+
+	if let Some(ref rpc) = *RPC {
+		let balance = rpc.call::<Value>("getbalance", &[]).unwrap();
+		println!("{:?}", balance);
+	}
+
+	test_v0_with_random(&secp, &mut rand);
+
+	// // Then we do a bunch of rounds with actual randomness.
+	// let mut rand = rand::thread_rng();
+	// for _ in 0..1000 {
+	// 	test_v0_with_random(&secp, &mut rand, &deploy, &verify);
+	// }
 }

@@ -9,10 +9,12 @@ edition = "2021"
 doubletake = { path = "../" }
 
 bitcoin = { version = "0.30.1", features = [ "serde" ] }
+clap = { version = "4", features = [ "derive" ] }
 elements = { version = "0.23.0", features = [ "serde" ] }
 hex-conservative = "0.1.1"
 jsonrpc = "0.16.0"
 lazy_static = "1.4.0"
+serde = { version = "1.0", features = [ "derive" ] }
 
 # for libelementsconsensus testing
 elements-consensus = { git = "https://github.com/stevenroose/rust-elements-consensus.git", rev = "b9898ce107c30f7253828dfa5ffcc1de37a8fa63" }

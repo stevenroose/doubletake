@@ -106,8 +106,7 @@ enum App {
 }
 
 fn inner_main() -> Result<(), String> {
-	let opt = App::parse();
-	match opt {
+	match App::parse() {
 		App::Create { segwit, network, pubkey, bond_value, bond_asset, expiry, reclaim_pubkey } => {
 			if !segwit {
 				return Err("please use the --segwit flag to indicate you want a segwit v0 bond")?;
@@ -179,8 +178,6 @@ fn inner_main() -> Result<(), String> {
 	Ok(())
 }
 
-// }
-
 fn main() {
 	if let Err(e) = inner_main() {
 		eprintln!("ERROR: {}", e);
@@ -188,14 +185,14 @@ fn main() {
 }
 
 /// Deserialize an bitcoin object from hex.
-pub fn btc_deserialize_hex<T: bitcoin::consensus::Decodable>(hex: &str) -> Result<T, String> {
+fn btc_deserialize_hex<T: bitcoin::consensus::Decodable>(hex: &str) -> Result<T, String> {
 	let mut iter = hex_conservative::HexToBytesIter::new(hex)
 		.map_err(|e| format!("invalid hex string: {}", e))?;
 	Ok(T::consensus_decode(&mut iter).map_err(|e| format!("decoding failed: {}", e))?)
 }
 
 /// Deserialize an elements object from hex.
-pub fn elem_deserialize_hex<T: elements::encode::Decodable>(hex: &str) -> Result<T, String> {
+fn elem_deserialize_hex<T: elements::encode::Decodable>(hex: &str) -> Result<T, String> {
 	let mut iter = hex_conservative::HexToBytesIter::new(hex)
 		.map_err(|e| format!("invalid hex string: {}", e))?;
 	Ok(T::consensus_decode(&mut iter).map_err(|e| format!("decoding failed: {}", e))?)
@@ -203,7 +200,7 @@ pub fn elem_deserialize_hex<T: elements::encode::Decodable>(hex: &str) -> Result
 
 /// Parse a secret key from a string.
 /// Supports both WIF format and hexadecimal.
-pub fn parse_secret_key(s: &str) -> Result<SecretKey, String> {
+fn parse_secret_key(s: &str) -> Result<SecretKey, String> {
 	if let Ok(k) = bitcoin::PrivateKey::from_str(&s) {
 		Ok(k.inner)
 	} else {
@@ -217,7 +214,7 @@ pub fn parse_secret_key(s: &str) -> Result<SecretKey, String> {
 /// - "liquid"
 /// - "liquidtestnet"
 /// - "elements"
-pub fn parse_elements_network(s: &str) -> Result<&'static elements::AddressParams, String> {
+fn parse_elements_network(s: &str) -> Result<&'static elements::AddressParams, String> {
 	match s {
 		"liquid" => Ok(&elements::AddressParams::LIQUID),
 		"liquidtestnet" => Ok(&elements::AddressParams::LIQUID_TESTNET),
@@ -229,7 +226,7 @@ pub fn parse_elements_network(s: &str) -> Result<&'static elements::AddressParam
 /// Parse an Elements asset ID from hex.
 ///
 /// Special case: "lbtc".
-pub fn parse_asset_id(s: &str) -> Result<AssetId, String> {
+fn parse_asset_id(s: &str) -> Result<AssetId, String> {
 	match s {
 		"lbtc" => Ok(AssetId::LIQUID_BTC),
 		_ => Ok(AssetId::from_str(s).map_err(|_| "invalid asset id")?),
@@ -237,7 +234,7 @@ pub fn parse_asset_id(s: &str) -> Result<AssetId, String> {
 }
 
 /// Convert a UNIX timestamp in seconds to a valid [LockTime] value.
-pub fn lock_time_from_unix(secs: u64) -> Result<elements::LockTime, String> {
+fn lock_time_from_unix(secs: u64) -> Result<elements::LockTime, String> {
 	let secs_u32 = secs.try_into().map_err(|_| "timelock overflow")?;
 	Ok(elements::LockTime::from_time(secs_u32).map_err(|e| format!("invalid timelock: {}", e))?)
 }
