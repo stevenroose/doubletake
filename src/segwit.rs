@@ -81,6 +81,8 @@ pub fn create_bond_script(
 
 		.into_script();
 
+	assert_eq!(324, script.len());
+
 	let spk = elements::Script::new_v0_wsh(&elements::WScriptHash::hash(&script[..]));
 	(script, spk)
 }
@@ -238,9 +240,9 @@ pub fn create_burn_tx(
 	);
 
 	// calculate the fee so we know what we can add a claim output
-	let total_tx_weight = 1645 // this value is just hardcoded all the fixed parts
-		+ spend1.script_code.as_script().encoded_len()
-		+ spend2.script_code.as_script().encoded_len()
+	let total_tx_weight = 1774 // this value is just hardcoded all the fixed parts
+		+ spend1.script_code.as_script().len()
+		+ spend2.script_code.as_script().len()
 		+ reward_address.script_pubkey().encoded_len()
 		+ spend1.signature.sig.serialize_der().len()
 		+ spend2.signature.sig.serialize_der().len()
@@ -387,11 +389,17 @@ pub mod bitcoin_sighash {
 				// cat <ver><prevs><seqs> <prev>
 				.push_opcode(OP_SWAP)
 				.push_opcode(OP_CAT)
-				// because the next element is flexible in size, just cat it too
+				// the next element is <script-code><value><sequence>
+				// This is variable in size, with a maximum length
+				// of 10,000 + 8 + 4 bytes. With a maximum stack element
+				// size of 520 bytes, this means we need to provide 20
+				// stack elements for the user to push this push.
+				// Ofc usually, 19 of them will be empty.
 				// cat: <ver><prev><seqs> <prev> <sc><val><seq>
-				// TODO(stevenroose) maybe check minimum length
-				.push_opcode(OP_SWAP)
-				.push_opcode(OP_CAT)
+				.repeat(20, |b| b
+					.push_opcode(OP_SWAP)
+					.push_opcode(OP_CAT)
+				)
 				// copy <outs> to front
 				.push_opcode(OP_OVER)
 				// check size of <outs>
@@ -440,7 +448,11 @@ pub mod bitcoin_sighash {
 		let mut cur = Cursor::new(&sighash_data);
 		witness.push(cur.take_bytes(68).unwrap());
 		witness.push(cur.take_bytes(36).unwrap());
-		witness.push(cur.take_bytes(12 + scriptcode_len).unwrap());
+		// The next element is <script-code><value><sequence>
+		// The max size of this element is 10,012 bytes so we
+		// have to split it up in pushes of 520 max each.
+		let next_element = cur.take_bytes(12 + scriptcode_len).unwrap();
+		util::divide_witness_pushes(witness, 20, false, &next_element);
 		witness.push(cur.take_bytes(32).unwrap());
 		witness.push(cur.take_bytes(8).unwrap());
 		assert_eq!(cur.position() as usize, sighash_data.len());
@@ -468,12 +480,17 @@ pub mod burn_covenant {
 			self.into()
 				// build the outputs hash
 				.push_slice(&elements::encode::serialize(&burn_txout))
-				.push_opcode(OP_SWAP)
-				.push_opcode(OP_CAT)
+				// Provide two pushes for the "other outputs" part to
+				// make a simple tx fit in standardness.
+				.repeat(2, |b| b
+					.push_opcode(OP_SWAP)
+					.push_opcode(OP_CAT)
+				)
 				.push_opcode(OP_HASH256)
 
 				// cat with first part of sighash
-				.push_opcode(OP_CAT)
+				// We provide 6 pushes for this. They will have to be reversed.
+				.repeat(6, |b| b.push_opcode(OP_CAT))
 
 				// cat last part
 				.push_opcode(OP_SWAP)
@@ -570,8 +587,8 @@ pub mod burn_covenant {
 			}
 			buf
 		};
-		witness.push(other_outputs_serialized);
-		witness.push(first_part);
+		util::divide_witness_pushes(witness, 2, false, &other_outputs_serialized);
+		util::divide_witness_pushes(witness, 6, true, &first_part);
 		witness.push(last_part);
 		witness.push(signing_pk.serialize().to_vec());
 		witness.push(signature.serialize_der().to_vec());

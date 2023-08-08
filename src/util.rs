@@ -8,6 +8,49 @@ use elements::AssetId;
 use elements::opcodes::all::*;
 use elements::script::Builder;
 
+/// Divide a large byte push into at most [n] pushes.
+///
+/// This method will try make 80-byte pushes if possible and at most 520-byte pushes.
+/// It will always push exactly n pushes, that will be empty if needed.
+///
+/// If [reverse] is true, the pushes will be pushed in reverse order.
+///
+/// NB: Panics if the size of [push] exceeds 520 * [n].
+pub fn divide_witness_pushes(
+	witness: &mut Vec<Vec<u8>>,
+	n: usize,
+	reverse: bool,
+	total_push: &[u8],
+) {
+	const STD_MAX_SIZE: usize = 80;
+	const CNS_MAX_SIZE: usize = 520;
+
+	if total_push.len() > n * CNS_MAX_SIZE {
+		panic!("tried to push more bytes than space available: {} bytes ({} available)",
+			total_push.len(), n * CNS_MAX_SIZE,
+		);
+	}
+
+	let elem_size = if total_push.len() <= n * STD_MAX_SIZE {
+		STD_MAX_SIZE
+	} else {
+		CNS_MAX_SIZE
+	};
+
+	let mut pushes = Vec::with_capacity(n);
+	for chunk in total_push.chunks(elem_size) {
+		pushes.push(chunk.to_vec());
+	}
+	assert!(pushes.len() <= n);
+	pushes.resize(n, Vec::new());
+
+	if reverse {
+		witness.extend(pushes.into_iter().rev());
+	} else {
+		witness.extend(pushes.into_iter());
+	}
+}
+
 /// Create a burn output, this is critical as this will be encoded
 /// into the covenant script, so it needs to be deterministic.
 pub fn burn_output(amount: Amount, asset: AssetId) -> elements::TxOut {
@@ -21,6 +64,15 @@ pub fn burn_output(amount: Amount, asset: AssetId) -> elements::TxOut {
 }
 
 pub trait BuilderExt: Into<Builder> + From<Builder> {
+	/// Repeat the same operation a certain number of times.
+	fn repeat(self, n: usize, f: impl Fn(Builder) -> Builder) -> Self {
+		let mut builder = self.into();
+		for _ in 0..n {
+			builder = f(builder);
+		}
+		builder.into()
+	}
+
 	/// Check that the top stack item is of the required size.
 	fn check_stack_item_size(self, size: i64) -> Self {
 		self.into()
@@ -88,3 +140,26 @@ pub trait ReadExt: io::Read {
 	}
 }
 impl<T: AsRef<[u8]>> ReadExt for io::Cursor<T> {}
+
+#[cfg(test)]
+mod test {
+	use super::*;
+
+	use hex_conservative::FromHex;
+
+	#[test]
+	fn test_divide_witness_pushes() {
+		let total = vec![1, 2, 3];
+		let mut witness = vec![];
+		divide_witness_pushes(&mut witness, 3, false, &total[..]);
+		assert_eq!(witness, vec![vec![1,2,3], vec![], vec![]]);
+
+		let bytes_80 = Vec::<u8>::from_hex("05dcafc73348d3e030357c8c29666e47399930238e7e5d459236da467305a39111cb6f29c93c3c571c9258e5c57dd5e860dd52f6b56dfeb8c9f4dc59f62bf455178c556b2c1d24913f46831ca23028c5").unwrap();
+
+		let mut total = bytes_80.clone();
+		total.extend_from_slice(&[1, 2]);
+		let mut witness = vec![];
+		divide_witness_pushes(&mut witness, 3, false, &total[..]);
+		assert_eq!(witness, vec![bytes_80.clone(), vec![1, 2], vec![]]);
+	}
+}

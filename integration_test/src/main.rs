@@ -271,10 +271,8 @@ fn test_v0_with_random(
 	).unwrap();
 
 	println!("burn tx: {}", elements::encode::serialize_hex(&burn_tx));
-	println!("burn tx: in={}, out={}",
-		bond_utxo.output.value.explicit().unwrap(),
-		burn_tx.output.iter().map(|o| o.value.explicit().unwrap()).sum::<u64>(),
-	);
+	println!("burn tx witness element sizes: {:?}",
+		burn_tx.input[0].witness.script_witness.iter().map(|i| i.len()).collect::<Vec<_>>());
 	verify_tx(&bond_spec, &bond_utxo, &burn_tx);
 
 	// Now try reclaim after the timelock
@@ -290,10 +288,8 @@ fn test_v0_with_random(
 	).unwrap();
 
 	println!("reclaim tx: {}", elements::encode::serialize_hex(&reclaim_tx));
-	println!("reclaim tx: in={}, out={}",
-		bond_utxo.output.value.explicit().unwrap(),
-		reclaim_tx.output.iter().map(|o| o.value.explicit().unwrap()).sum::<u64>(),
-	);
+	println!("reclaim tx witness element sizes: {:?}",
+		reclaim_tx.input[0].witness.script_witness.iter().map(|i| i.len()).collect::<Vec<_>>());
 	verify_tx(&bond_spec, &bond_utxo, &reclaim_tx);
 }
 
