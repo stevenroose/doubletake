@@ -13,8 +13,7 @@ mod ffi;
 use std::{fmt, io};
 
 use bitcoin::{Amount, FeeRate};
-use bitcoin::secp256k1::{self, PublicKey, SecretKey};
-use elements::AssetId;
+use bitcoin::secp256k1::{self, SecretKey};
 use elements::encode::{Decodable, Encodable};
 
 
@@ -69,7 +68,7 @@ impl fmt::Display for BondSpecParseError {
 ///
 /// With this, a bond can be exactly reconstructed and this information is
 /// needed for all interactions with the bond.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BondSpec {
 	Segwit(segwit::BondSpec),
 }
@@ -143,22 +142,6 @@ impl BondSpec {
 		let b = base64::decode_config(s, base64::URL_SAFE).map_err(BondSpecParseError::Base64)?;
 		Ok(Self::deserialize(&b[..])?)
 	}
-}
-
-pub fn create_segwit_bond_address(
-	network: &'static elements::AddressParams,
-	pubkey: PublicKey,
-	bond_value: Amount,
-	bond_asset: AssetId,
-	lock_time: elements::LockTime,
-	reclaim_pubkey: PublicKey,
-) -> (BondSpec, elements::Address) {
-	let spec = segwit::BondSpec {
-		pubkey, bond_value, bond_asset, lock_time, reclaim_pubkey,
-	};
-	let (_, spk) = segwit::create_bond_script(&spec);
-	let addr = elements::Address::from_script(&spk, None, network).expect("legit script");
-	(BondSpec::Segwit(spec), addr)
 }
 
 pub fn create_burn_tx(

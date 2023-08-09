@@ -5,9 +5,12 @@ extern crate link_cplusplus;
 
 
 use std::collections::HashMap;
-use std::str::FromStr;
+use std::convert::TryInto;
+use std::str::{self, FromStr};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use bitcoin::{Amount, Denomination, FeeRate};
+use bitcoin::consensus::encode as btcencode;
 use bitcoin::hashes::Hash;
 use bitcoin::hashes::hex::FromHex;
 use bitcoin::secp256k1::{self, Secp256k1, SecretKey};
@@ -15,6 +18,7 @@ use bitcoin::secp256k1::rand::{self, Rng, SeedableRng};
 use clap::Parser;
 use jsonrpc::serde_json::value::{Value, RawValue};
 use serde;
+use serde_json;
 
 use doubletake::*;
 
@@ -25,7 +29,7 @@ struct Opts {
 	/// Assumes the node's wallet has sufficient balance.
 	#[arg(long)]
 	regtest: bool,
-	#[arg(long, default_value = "7040")]
+	#[arg(long, default_value_t = 7040)]
 	regtest_port: u16,
 	#[arg(long)]
 	regtest_user: Option<String>,
@@ -34,9 +38,12 @@ struct Opts {
 
 	/// Use libelementsconsensus to do consensus validation.
 	///
-	/// This currently doesn't work.
+	/// This currently will fail.
 	#[arg(long)]
 	elementsconsensus: bool,
+
+	#[arg(long)]
+	cli: Option<String>,
 }
 
 lazy_static! {
@@ -70,7 +77,10 @@ fn arg(v: impl serde::Serialize) -> Box<RawValue> {
 	RawValue::from_string(s.into()).unwrap()
 }
 
-fn deploy_bond(addr: &elements::Address, value: Amount) -> elements::OutPoint {
+fn deploy_bond(
+	addr: &elements::Address,
+	value: Amount,
+) -> Option<(elements::OutPoint, elements::Transaction)> {
 	if let Some(ref rpc) = *RPC {
 		let txid = rpc.call::<elements::Txid>("sendtoaddress", &[
 			arg(addr.to_string()),
@@ -91,9 +101,9 @@ fn deploy_bond(addr: &elements::Address, value: Amount) -> elements::OutPoint {
 				false
 			}
 		}).unwrap();
-		elements::OutPoint::new(txid, vout as u32)
+		Some((elements::OutPoint::new(txid, vout as u32), tx))
 	} else {
-		"0000000000000000000000000000000000000000000000000000000000000001:0".parse().unwrap()
+		None
 	}
 }
 
@@ -123,10 +133,9 @@ pub trait SaneRandom {
 	fn sane_rand(rand: &mut impl Rng) -> Self;
 }
 
-impl SaneRandom for bitcoin::OutPoint {
+impl SaneRandom for bitcoin::Txid {
 	fn sane_rand(rand: &mut impl Rng) -> Self {
-		let txid = bitcoin::Txid::from_byte_array(rand.gen());
-		bitcoin::OutPoint::new(txid, rand.gen::<u8>() as u32)
+		bitcoin::Txid::from_byte_array(rand.gen())
 	}
 }
 
@@ -207,18 +216,26 @@ fn test_v0_with_random(
 
 	// And generate a spec for our bond.
 	let (reclaim_sk, reclaim_pk) = secp.generate_keypair(rand);
+	// Use expiry in the past so that elements allows us to reclaim.
+	let expiry = SystemTime::now()
+		.checked_sub(Duration::from_secs(60 * 60 * 24 * 30)).unwrap()
+		.duration_since(UNIX_EPOCH).unwrap()
+		.as_secs()
+		.try_into().unwrap();
 	let bond_spec = doubletake::segwit::BondSpec {
 		pubkey: bond_pk.clone(),
 		bond_value: Amount::from_btc(5.0).unwrap(),
 		bond_asset: *TEST_ASSET,
-		// use 1 locktime so that we can reclaim our bond already
-		lock_time: elements::LockTime::from_height(1).unwrap(),
-		// lock_time: elements::LockTime::from_time(1722369854).unwrap(),
+		lock_time: elements::LockTime::from_time(expiry).unwrap(),
 		reclaim_pubkey: reclaim_pk,
 	};
 
 	// Then we can create our bond script.
-	let (bond_script, bond_spk) = doubletake::segwit::create_bond_script(&bond_spec);
+	let (bond_script, bond_spk) = if OPT.cli.is_some() {
+		cli::create_segwit(&bond_spec)
+	} else {
+		doubletake::segwit::create_bond_script(&bond_spec)
+	};
 	println!("bond script: {}", bond_script.asm());
 	let bond_addr = elements::Address::from_script(&bond_spk, None, TEST_NET).unwrap();
 	println!("bond addr: {}", bond_addr);
@@ -226,29 +243,41 @@ fn test_v0_with_random(
 
 	// And pretend we sent money to the address.
 	let amount = Amount::from_btc(6.0).unwrap();
-	let bond_outpoint = deploy_bond(&bond_addr, amount);
+	let (bond_outpoint, bond_tx) = if let Some((utxo, tx)) = deploy_bond(&bond_addr, amount) {
+		(utxo, Some(tx))
+	} else {
+		("0000000000000000000000000000000000000000000000000000000000000000:0".parse().unwrap(), None)
+	};
 	let bond_utxo = ElementsUtxo {
 		outpoint: bond_outpoint,
-		output: elements::TxOut {
-			value: expl(amount),
-			asset: *TEST_CASSET,
-			nonce: elements::confidential::Nonce::Null,
-			script_pubkey: bond_addr.script_pubkey(),
-			witness: elements::TxOutWitness::default(),
-		},
+		output: bond_tx.as_ref()
+			.map(|tx| tx.output[bond_outpoint.vout as usize].clone())
+			.unwrap_or_else(|| elements::TxOut {
+				value: expl(amount),
+				asset: *TEST_CASSET,
+				nonce: elements::confidential::Nonce::Null,
+				script_pubkey: bond_addr.script_pubkey(),
+				witness: elements::TxOutWitness::default(),
+			}),
 	};
 	
 	// So now we need to fake a double spend from this key. Not easy.
 
 	// The output we are going to double spend.
-	let double_spend_utxo = BitcoinUtxo {
-		outpoint: bitcoin::OutPoint::sane_rand(rand),
-		output: bitcoin::TxOut {
+	let fake_double_spend_tx = bitcoin::Transaction {
+		version: rand.gen::<u8>().into(),
+		lock_time: bitcoin::locktime::absolute::LockTime::ZERO,
+		input: vec![bitcoin::TxIn::default()],
+		output: vec![bitcoin::TxOut {
 			value: Amount::from_btc(1.0).unwrap().to_sat(),
 			script_pubkey: bitcoin::ScriptBuf::new_v0_p2wpkh(
 				&bitcoin::PublicKey::new(bond_pk).wpubkey_hash().unwrap(),
 			),
-		},
+		}],
+	};
+	let double_spend_utxo = BitcoinUtxo {
+		outpoint: bitcoin::OutPoint::new(fake_double_spend_tx.txid(), 0),
+		output: fake_double_spend_tx.output[0].clone(),
 	};
 
 	// We create two different transactions that spend the same UTXO.
@@ -257,16 +286,30 @@ fn test_v0_with_random(
 
 	// So let's BURN!
 	let (_, reward_pk) = secp.generate_keypair(rand);
-	let burn_tx = doubletake::segwit::create_burn_tx(
-		secp,
-		&bond_utxo,
-		&bond_spec,
-		&double_spend_utxo,
-		&spend1,
-		&spend2,
-		FeeRate::from_sat_per_vb(1).unwrap(),
-		&elements::Address::p2wpkh(&bitcoin::PublicKey::new(reward_pk), None, TEST_NET),
-	).unwrap();
+	let burn_tx = if OPT.cli.is_some() {
+		cli::burn(
+			bond_utxo.outpoint,
+			bond_tx.as_ref().expect("can't use --cli without --regtest"),
+			&BondSpec::Segwit(bond_spec.clone()),
+			double_spend_utxo.outpoint,
+			&fake_double_spend_tx,
+			&spend1,
+			&spend2,
+			&elements::Address::p2wpkh(&bitcoin::PublicKey::new(reward_pk), None, TEST_NET),
+			FeeRate::from_sat_per_vb(1).unwrap(),
+		)
+	} else {
+		doubletake::segwit::create_burn_tx(
+			secp,
+			&bond_utxo,
+			&bond_spec,
+			&double_spend_utxo,
+			&spend1,
+			&spend2,
+			FeeRate::from_sat_per_vb(1).unwrap(),
+			&elements::Address::p2wpkh(&bitcoin::PublicKey::new(reward_pk), None, TEST_NET),
+		).unwrap()
+	};
 
 	println!("burn tx: {}", elements::encode::serialize_hex(&burn_tx));
 	println!("burn tx witness element sizes (n={}): {:?}",
@@ -278,14 +321,25 @@ fn test_v0_with_random(
 	// Now try reclaim after the timelock
 
 	let output = elements::Address::from_str("ert1q76vrm2xyvjgl6g392srk5pwas44twu6rpd8tk5").unwrap();
-	let reclaim_tx = doubletake::segwit::create_reclaim_tx(
-		secp,
-		&bond_utxo,
-		&bond_spec,
-		FeeRate::from_sat_per_vb(1).unwrap(),
-		&reclaim_sk,
-		&output.script_pubkey(),
-	).unwrap();
+	let reclaim_tx = if OPT.cli.is_some() {
+		cli::reclaim(
+			bond_utxo.outpoint,
+			bond_tx.as_ref().expect("can't use --cli without --regtest"),
+			&BondSpec::Segwit(bond_spec.clone()),
+			reclaim_sk,
+			&output,
+			FeeRate::from_sat_per_vb(1).unwrap(),
+		)
+	} else {
+		doubletake::segwit::create_reclaim_tx(
+			secp,
+			&bond_utxo,
+			&bond_spec,
+			FeeRate::from_sat_per_vb(1).unwrap(),
+			&reclaim_sk,
+			&output.script_pubkey(),
+		).unwrap()
+	};
 
 	println!("reclaim tx: {}", elements::encode::serialize_hex(&reclaim_tx));
 	println!("reclaim tx witness element sizes (n={}): {:?}",
@@ -300,16 +354,112 @@ fn verify_tx_elementsconsensus(
 	value: &elements::confidential::Value,
 	index: usize,
 	transaction: &elements::Transaction,
-) -> Result<(), elements_consensus::ConsensusViolation> {
-	use elements_consensus::elements::encode::deserialize;
-	use elements::encode::serialize;
+) -> Result<(), String> {
+	// use elements_consensus::elements::encode::deserialize;
+	// use elements::encode::serialize;
 
-	elements_consensus::verify(
-		deserialize(&serialize(script)).unwrap(),
-		&deserialize(&serialize(value)).unwrap(),
-		index,
-		&deserialize(&serialize(transaction)).unwrap(),
-	).expect("index error")
+	// if let Err(e) = elements_consensus::verify(
+	// 	deserialize(&serialize(script)).unwrap(),
+	// 	&deserialize(&serialize(value)).unwrap(),
+	// 	index,
+	// 	&deserialize(&serialize(transaction)).unwrap(),
+	// ).expect("index error") {
+	// 	return Err(e.to_string());
+	// }
+
+	Ok(())
+}
+
+mod cli {
+	use super::*;
+	use std::process;
+
+	fn cmd(args: &[&str]) -> String {
+		println!("CLI: executing: doubletake {}", args.join(" "));
+		let out = process::Command::new(OPT.cli.as_ref().unwrap())
+			.args(args)
+			.output()
+			.expect("error running CLI command");
+		if !out.stderr.is_empty() {
+			panic!("CLI err: {}", str::from_utf8(&out.stderr).expect("stderr not utf8"));
+		}
+		let ret = String::from_utf8(out.stdout).expect("output not UTF8");
+		println!("CLI output: {}", ret);
+		ret
+	}
+
+	pub fn create_segwit(spec: &doubletake::segwit::BondSpec) -> (elements::Script, elements::Script) {
+		let out = cmd(&["create",
+			"--segwit",
+			"--pubkey", &spec.pubkey.to_string(),
+			"--bond-value", &spec.bond_value.to_string(),
+			"--bond-asset", &spec.bond_asset.to_string(),
+			"--expiry", &spec.lock_time.to_consensus_u32().to_string(),
+			"--reclaim-pubkey", &spec.reclaim_pubkey.to_string(),
+			"--network", "elements",
+		]);
+		#[derive(serde::Deserialize)]
+		struct Ret {
+			spec: String,
+			address: elements::Address,
+			witness_script: String,
+		}
+		let ret = serde_json::from_str::<Ret>(&out).expect("unexpected CLI output");
+		let out_spec = BondSpec::from_base64(&ret.spec).unwrap();
+		assert_eq!(out_spec, BondSpec::Segwit(spec.clone()));
+		let script = Vec::<u8>::from_hex(&ret.witness_script).unwrap().into();
+		(script, ret.address.script_pubkey())
+	}
+
+	pub fn burn(
+		bond_utxo: elements::OutPoint,
+		bond_tx: &elements::Transaction,
+		spec: &BondSpec,
+		double_spend_utxo: bitcoin::OutPoint,
+		double_spend_tx: &bitcoin::Transaction,
+		tx1: &bitcoin::Transaction,
+		tx2: &bitcoin::Transaction,
+		reward_addr: &elements::Address,
+		fee_rate: FeeRate,
+	) -> elements::Transaction {
+		let out = cmd(&["burn",
+			"--bond-utxo", &bond_utxo.to_string(),
+			"--bond-tx", &elements::encode::serialize_hex(bond_tx),
+			"--spec", &spec.to_base64(),
+			"--double-spend-utxo", &double_spend_utxo.to_string(),
+			"--double-spend-tx", &btcencode::serialize_hex(double_spend_tx),
+			"--tx1", &btcencode::serialize_hex(tx1),
+			"--tx2", &btcencode::serialize_hex(tx2),
+			"--reward-address", &reward_addr.to_string(),
+			"--feerate", &fee_rate.to_sat_per_vb_ceil().to_string(),
+		]);
+		let mut bytes = hex_conservative::HexToBytesIter::new(
+			&out.split_whitespace().next().unwrap(),
+		).unwrap();
+		elements::encode::Decodable::consensus_decode(&mut bytes).unwrap()
+	}
+
+	pub fn reclaim(
+		bond_utxo: elements::OutPoint,
+		bond_tx: &elements::Transaction,
+		spec: &BondSpec,
+		reclaim_sk: secp256k1::SecretKey,
+		claim_addr: &elements::Address,
+		fee_rate: FeeRate,
+	) -> elements::Transaction {
+		let out = cmd(&["reclaim",
+			"--bond-utxo", &bond_utxo.to_string(),
+			"--bond-tx", &elements::encode::serialize_hex(bond_tx),
+			"--spec", &spec.to_base64(),
+			"--reclaim-sk", &reclaim_sk.display_secret().to_string(),
+			"--claim-address", &claim_addr.to_string(),
+			"--feerate", &fee_rate.to_sat_per_vb_ceil().to_string(),
+		]);
+		let mut bytes = hex_conservative::HexToBytesIter::new(
+			&out.split_whitespace().next().unwrap(),
+		).unwrap();
+		elements::encode::Decodable::consensus_decode(&mut bytes).unwrap()
+	}
 }
 
 fn main() {

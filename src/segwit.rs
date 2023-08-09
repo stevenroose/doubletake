@@ -16,7 +16,7 @@ use crate::util::{self, BitcoinEncodableExt, BuilderExt, ElementsEncodableExt, R
 use self::bitcoin_sighash::SegwitBitcoinSighashBuilder;
 use self::burn_covenant::SegwitBurnCovenantBuilder;
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BondSpec {
 	pub pubkey: PublicKey,
 	pub bond_value: Amount,
@@ -81,7 +81,9 @@ pub fn create_bond_script(
 
 		.into_script();
 
-	assert_eq!(324, script.len());
+	let expected_len = 323
+		+ util::scriptint_size(spec.lock_time.to_consensus_u32() as i64);
+	assert_eq!(expected_len, script.len());
 
 	let spk = elements::Script::new_v0_wsh(&elements::WScriptHash::hash(&script[..]));
 	(script, spk)
@@ -240,13 +242,13 @@ pub fn create_burn_tx(
 	);
 
 	// calculate the fee so we know what we can add a claim output
-	let total_tx_weight = 1774 // this value is just hardcoded all the fixed parts
+	let total_tx_weight = 1777 // this value is just hardcoded all the fixed parts
 		+ spend1.script_code.as_script().len()
 		+ spend2.script_code.as_script().len()
 		+ reward_address.script_pubkey().encoded_len()
 		+ spend1.signature.sig.serialize_der().len()
 		+ spend2.signature.sig.serialize_der().len()
-		+ spec.lock_time.encoded_len()
+		+ util::scriptint_size(spec.lock_time.to_consensus_u32() as i64)
 		+ bond_script.encoded_len()
 		+ ret.output[1..].to_vec().encoded_len();
 	let fee = fee_rate * Weight::from_wu(total_tx_weight as u64);

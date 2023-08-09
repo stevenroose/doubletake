@@ -1,6 +1,6 @@
 [package]
 name = "doubletake"
-version = "0.0.0-alpha.4"
+version = "0.0.0-alpha.5"
 license = "CC0-1.0"
 edition = "2021"
 authors = [ "Steven Roose <steven@roose.io>", "James Dorfman" ]

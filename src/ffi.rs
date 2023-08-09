@@ -43,9 +43,10 @@ pub fn create_segwit_bond_address(
 	let locktime = lock_time_from_unix(lock_time_unix)?;
 	let reclaim_pubkey = reclaim_pubkey.parse().map_err(|e| format!("invalid pubkey: {}", e))?;
 
-	let (spec, addr) = crate::create_segwit_bond_address(
-		network, pubkey, bond_value, bond_asset, locktime, reclaim_pubkey,
-	);
+
+	let spec = segwit::BondSpec { pubkey, bond_value, bond_asset, lock_time, reclaim_pubkey };
+	let (_, spk) = segwit::create_bond_script(&spec);
+	let addr = elements::Address::from_script(&spk, None, network).expect("legit script");
 	Ok(serde_wasm_bindgen::to_value(&json!({
 		"spec": spec.to_base64(),
 		"address": addr.to_string(),

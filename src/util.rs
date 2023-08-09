@@ -94,6 +94,15 @@ pub trait BuilderExt: Into<Builder> + From<Builder> {
 	}
 }
 
+/// Give the encoded size of the integer when pushed as a stack element.
+pub fn scriptint_size(int: i64) -> usize {
+	let script = Builder::new()
+		.push_int(int)
+		.into_script();
+	let len = script.encoded_len();
+	len - 1
+}
+
 impl BuilderExt for Builder {}
 
 pub trait BitcoinEncodableExt: bitcoin::consensus::encode::Encodable {

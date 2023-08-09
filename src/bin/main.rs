@@ -8,6 +8,7 @@ use bitcoin::secp256k1::{PublicKey, SecretKey};
 use clap::Parser;
 use elements::AssetId;
 use serde_json::json;
+use hex_conservative::DisplayHex;
 
 use doubletake::{BitcoinUtxo, BondSpec, ElementsUtxo};
 
@@ -36,6 +37,8 @@ enum App {
 		#[arg(long)]
 		reclaim_pubkey: PublicKey,
 		/// The Elements/Liquid network to deploy this bond on.
+		///
+		/// Possible options: "liquid", "liquidtestnet", "elements".
 		///
 		/// Default value: Liquid mainnet.
 		#[arg(long, default_value = "liquid", value_parser = parse_elements_network)]
@@ -113,12 +116,15 @@ fn inner_main() -> Result<(), String> {
 			}
 			let lock_time = lock_time_from_unix(expiry)?;
 
-			let (spec, addr) = doubletake::create_segwit_bond_address(
-				network, pubkey, bond_value, bond_asset, lock_time, reclaim_pubkey,
-			);
+			let spec = doubletake::segwit::BondSpec {
+				pubkey, bond_value, bond_asset, lock_time, reclaim_pubkey,
+			};
+			let (script, spk) = doubletake::segwit::create_bond_script(&spec);
+			let addr = elements::Address::from_script(&spk, None, network).expect("legit script");
 			serde_json::to_writer_pretty(::std::io::stdout(), &json!({
-				"spec": spec.to_base64(),
+				"spec": doubletake::BondSpec::Segwit(spec).to_base64(),
 				"address": addr.to_string(),
+				"witness_script": script.to_bytes().as_hex().to_string(),
 			})).unwrap();
 			println!();
 		},
@@ -131,7 +137,9 @@ fn inner_main() -> Result<(), String> {
 				output: {
 					let tx = elem_deserialize_hex::<elements::Transaction>(&bond_tx)
 						.map_err(|e| format!("invalid bond tx hex: {}", e))?;
-					tx.output.get(bond_utxo.vout as usize).ok_or("invalid tx for UTXO")?.clone()
+					tx.output.get(bond_utxo.vout as usize)
+						.ok_or("invalid tx for bond UTXO")?
+						.clone()
 				},
 			};
 			let spec = BondSpec::from_base64(&spec)
@@ -141,7 +149,9 @@ fn inner_main() -> Result<(), String> {
 				output: {
 					let tx = btc_deserialize_hex::<bitcoin::Transaction>(&double_spend_tx)
 						.map_err(|e| format!("invalid bond tx hex: {}", e))?;
-					tx.output.get(bond_utxo.vout as usize).ok_or("invalid tx for UTXO")?.clone()
+					tx.output.get(double_spend_utxo.vout as usize)
+						.ok_or("invalid tx for double spend UTXO")?
+						.clone()
 				},
 			};
 			let tx1 = elem_deserialize_hex(&tx1)
@@ -161,7 +171,9 @@ fn inner_main() -> Result<(), String> {
 				output: {
 					let tx = elem_deserialize_hex::<elements::Transaction>(&bond_tx)
 						.map_err(|e| format!("invalid bond tx hex: {}", e))?;
-					tx.output.get(bond_utxo.vout as usize).ok_or("invalid tx for UTXO")?.clone()
+					tx.output.get(bond_utxo.vout as usize)
+						.ok_or("invalid tx for bond UTXO")?
+						.clone()
 				},
 			};
 			let spec = BondSpec::from_base64(&spec)

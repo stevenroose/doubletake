@@ -53,7 +53,7 @@ There is an integration test that tests either
 You can run a compatible regtest network as follows:
 
 ```
-$ elementsd -chain=elementsregtest -server=1 -validatepegin=0 -rpcport=8888 -rpcuser=testuser -rpcpassword=testpass -anyonecanspendaremine=1 -initialfreecoins=2100000000000000 -blindedaddresses=0 -acceptnonstdtxn=1
+$ elementsd -chain=elementsregtest -server=1 -validatepegin=0 -rpcport=8888 -rpcuser=testuser -rpcpassword=testpass -anyonecanspendaremine=1 -initialfreecoins=2100000000000000 -blindedaddresses=0
 $ # in another terminal, prepare as follows:
 $ elements-cli -chain=elementsregtest -rpcuser=testuser -rpcpassword=testpass -rpcport=8888 createwallet ""
 $ elements-cli -chain=elementsregtest -rpcuser=testuser -rpcpassword=testpass -rpcport=8888 rescanblockchain
