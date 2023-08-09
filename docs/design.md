@@ -34,14 +34,12 @@ is technically a double spend.
 
 So a strategy would be to take two times 5 pushes as inputs:
 
-//TODO(stevenroose) maybe fix scriptcode 
-
 We do basic checking on the input length to make it harder to
 use any random signature to burn the bond.
 
 - `<version><prevouts><sequences>` (exact 68 bytes)
 - `<prevout>` (exact 36 bytes)
-- `<script-code><value><sequence>` (free form, minimum 16 bytes I guess)
+- `<script-code><value><sequence>` (free form, minimum 12 bytes I guess)
 - `<outputs>` (exact 32 bytes)
 - `<locktime><sighashtype>` (exact 8 bytes)
 - `<signature>`

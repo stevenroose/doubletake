@@ -69,6 +69,7 @@ impl fmt::Display for BondSpecParseError {
 /// With this, a bond can be exactly reconstructed and this information is
 /// needed for all interactions with the bond.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum BondSpec {
 	Segwit(segwit::BondSpec),
 }

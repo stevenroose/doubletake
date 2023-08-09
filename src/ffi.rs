@@ -7,10 +7,11 @@ use std::str::FromStr;
 use bitcoin::{Amount, FeeRate};
 use bitcoin::secp256k1::SecretKey;
 use elements::AssetId;
+use hex_conservative::DisplayHex;
 use serde_json::json;
 use wasm_bindgen::prelude::*;
 
-use crate::BondSpec;
+use crate::{segwit, BondSpec};
 
 
 
@@ -40,16 +41,17 @@ pub fn create_segwit_bond_address(
 	let pubkey = pubkey.parse().map_err(|e| format!("invalid pubkey: {}", e))?;
 	let bond_value = Amount::from_sat(bond_value_sat);
 	let bond_asset = parse_asset_id(bond_asset)?;
-	let locktime = lock_time_from_unix(lock_time_unix)?;
+	let lock_time = lock_time_from_unix(lock_time_unix)?;
 	let reclaim_pubkey = reclaim_pubkey.parse().map_err(|e| format!("invalid pubkey: {}", e))?;
 
 
 	let spec = segwit::BondSpec { pubkey, bond_value, bond_asset, lock_time, reclaim_pubkey };
-	let (_, spk) = segwit::create_bond_script(&spec);
+	let (script, spk) = segwit::create_bond_script(&spec);
 	let addr = elements::Address::from_script(&spk, None, network).expect("legit script");
 	Ok(serde_wasm_bindgen::to_value(&json!({
-		"spec": spec.to_base64(),
+		"spec": BondSpec::Segwit(spec).to_base64(),
 		"address": addr.to_string(),
+		"witness_script": script.to_bytes().as_hex().to_string(),
 	})).unwrap())
 }
 
