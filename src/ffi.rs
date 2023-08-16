@@ -26,8 +26,9 @@ use crate::{segwit, BondSpec};
 /// - `reclaim_pubkey`: public key in hex to be used for reclaiming the bond
 ///
 /// Output: object with following fields:
-/// - spec: base64 bond specification
-/// - address: Elements/Liquid address to send money into the bond
+/// - `spec`: base64 bond specification
+/// - `address`: Elements/Liquid address to send money into the bond
+/// - `witness_script`: the witness script used for the address
 #[wasm_bindgen]
 pub fn create_segwit_bond_address(
 	network: &str,
@@ -56,6 +57,15 @@ pub fn create_segwit_bond_address(
 }
 
 /// Inspect a base64-encoded bond spec, an object is returned.
+///
+/// The output is the same as when using the `doubletake inspect` CLI:
+///
+/// - `type`: bond type
+/// - `pubkey`: public key holding the bond
+/// - `bond_value`: the value in satoshi
+/// - `bond_asset`: the asset ID
+/// - `lock_time`: the locktime of the expiry
+/// - `reclaim_pubkey`: the reclaim pubkey
 #[wasm_bindgen]
 pub fn inspect_bond(spec: &str) -> Result<JsValue, JsValue> {
 	let spec = BondSpec::from_base64(&spec)
@@ -138,7 +148,7 @@ pub fn create_reclaim_tx(
 }
 
 /// Deserialize an elements object from hex.
-pub fn elem_deserialize_hex<T: elements::encode::Decodable>(hex: &str) -> Result<T, String> {
+fn elem_deserialize_hex<T: elements::encode::Decodable>(hex: &str) -> Result<T, String> {
 	let mut iter = hex_conservative::HexToBytesIter::new(hex)
 		.map_err(|e| format!("invalid hex string: {}", e))?;
 	Ok(T::consensus_decode(&mut iter).map_err(|e| format!("decoding failed: {}", e))?)
@@ -146,7 +156,7 @@ pub fn elem_deserialize_hex<T: elements::encode::Decodable>(hex: &str) -> Result
 
 /// Parse a secret key from a string.
 /// Supports both WIF format and hexadecimal.
-pub fn parse_secret_key(s: &str) -> Result<SecretKey, String> {
+fn parse_secret_key(s: &str) -> Result<SecretKey, String> {
 	if let Ok(k) = bitcoin::PrivateKey::from_str(&s) {
 		Ok(k.inner)
 	} else {
@@ -160,7 +170,7 @@ pub fn parse_secret_key(s: &str) -> Result<SecretKey, String> {
 /// - "liquid"
 /// - "liquidtestnet"
 /// - "elements"
-pub fn parse_elements_network(s: &str) -> Result<&'static elements::AddressParams, String> {
+fn parse_elements_network(s: &str) -> Result<&'static elements::AddressParams, String> {
 	match s {
 		"liquid" => Ok(&elements::AddressParams::LIQUID),
 		"liquidtestnet" => Ok(&elements::AddressParams::LIQUID_TESTNET),
@@ -172,7 +182,7 @@ pub fn parse_elements_network(s: &str) -> Result<&'static elements::AddressParam
 /// Parse an Elements asset ID from hex.
 ///
 /// Special case: "lbtc".
-pub fn parse_asset_id(s: &str) -> Result<AssetId, String> {
+fn parse_asset_id(s: &str) -> Result<AssetId, String> {
 	match s {
 		"lbtc" => Ok(AssetId::LIQUID_BTC),
 		_ => Ok(AssetId::from_str(s).map_err(|_| "invalid asset id")?),
@@ -180,7 +190,7 @@ pub fn parse_asset_id(s: &str) -> Result<AssetId, String> {
 }
 
 /// Convert a UNIX timestamp in seconds to a valid [LockTime] value.
-pub fn lock_time_from_unix(secs: u64) -> Result<elements::LockTime, String> {
+fn lock_time_from_unix(secs: u64) -> Result<elements::LockTime, String> {
 	let secs_u32 = secs.try_into().map_err(|_| "timelock overflow")?;
 	Ok(elements::LockTime::from_time(secs_u32).map_err(|e| format!("invalid timelock: {}", e))?)
 }
