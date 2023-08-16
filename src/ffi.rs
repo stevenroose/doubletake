@@ -55,6 +55,14 @@ pub fn create_segwit_bond_address(
 	})).unwrap())
 }
 
+/// Inspect a base64-encoded bond spec, an object is returned.
+#[wasm_bindgen]
+pub fn inspect_bond(spec: &str) -> Result<JsValue, JsValue> {
+	let spec = BondSpec::from_base64(&spec)
+		.map_err(|e| format!("invalid spec: {}", e))?;
+	Ok(serde_wasm_bindgen::to_value(&spec).unwrap())
+}
+
 /// Create a transaction to burn a bond.
 ///
 /// Input:

@@ -17,10 +17,13 @@ use self::bitcoin_sighash::SegwitBitcoinSighashBuilder;
 use self::burn_covenant::SegwitBurnCovenantBuilder;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 pub struct BondSpec {
 	pub pubkey: PublicKey,
+	#[cfg_attr(feature = "serde", serde(with = "bitcoin::amount::serde::as_sat"))]
 	pub bond_value: Amount,
 	pub bond_asset: AssetId,
+	#[cfg_attr(feature = "serde", serde(with = "util::serde::locktime_as_int"))]
 	pub lock_time: elements::LockTime,
 	/// Key to reclaim the bond after it expires. Construction
 	/// will require a signature verified by OP_CHECKSIGVERIFY.

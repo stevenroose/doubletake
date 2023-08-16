@@ -49,6 +49,12 @@ enum App {
 		#[arg(long, default_value_t = AssetId::LIQUID_BTC, value_parser(parse_asset_id))]
 		bond_asset: AssetId,
 	},
+	/// Inspect a bond spec.
+	#[command()]
+	Inspect {
+		/// The bond spec in base64.
+		spec: String,
+	},
 	/// Burn a double spend bond by providing proof of a double spend
 	#[command()]
 	Burn {
@@ -126,6 +132,12 @@ fn inner_main() -> Result<(), String> {
 				"address": addr.to_string(),
 				"witness_script": script.to_bytes().as_hex().to_string(),
 			})).unwrap();
+			println!();
+		},
+		App::Inspect { spec } => {
+			let spec = BondSpec::from_base64(&spec)
+				.map_err(|e| format!("invalid spec: {}", e))?;
+			serde_json::to_writer_pretty(::std::io::stdout(), &spec).unwrap();
 			println!();
 		},
 		App::Burn {

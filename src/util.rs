@@ -150,6 +150,22 @@ pub trait ReadExt: io::Read {
 }
 impl<T: AsRef<[u8]>> ReadExt for io::Cursor<T> {}
 
+#[cfg(feature = "serde")]
+pub mod serde {
+	pub mod locktime_as_int {
+		use elements::LockTime;
+
+		pub fn serialize<S: serde::Serializer>(locktime: &LockTime, s: S) -> Result<S::Ok, S::Error> {
+			serde::Serialize::serialize(&locktime.to_consensus_u32(), s)
+		}
+
+		pub fn deserialize<'de, D: serde::Deserializer<'de>>(d: D) -> Result<LockTime, D::Error> {
+			let lt: u32 = serde::Deserialize::deserialize(d)?;
+			Ok(LockTime::from_consensus(lt))
+		}
+	}
+}
+
 #[cfg(test)]
 mod test {
 	use super::*;
