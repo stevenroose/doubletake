@@ -8,7 +8,6 @@ use bitcoin::{Amount, FeeRate};
 use bitcoin::secp256k1::SecretKey;
 use elements::AssetId;
 use hex_conservative::DisplayHex;
-use serde_json::json;
 use wasm_bindgen::prelude::*;
 
 use crate::{segwit, BondSpec};
@@ -18,59 +17,77 @@ use crate::{segwit, BondSpec};
 /// Create a segwit bond and address.
 ///
 /// Input:
-/// - `network`: "liquid", "liquidtestnet" or "elements"
 /// - `pubkey`: public key in hex that will commit to the bond
 /// - `bond_value`: value in sats
 /// - `bond_asset`: asset id in hex, or "lbtc"
 /// - `lock_time_unix`: locktime as a unix timestamp (like block timestamps)
 /// - `reclaim_pubkey`: public key in hex to be used for reclaiming the bond
 ///
-/// Output: object with following fields:
-/// - `spec`: base64 bond specification
-/// - `address`: Elements/Liquid address to send money into the bond
-/// - `witness_script`: the witness script used for the address
+/// Output is the same as the [bond_inspect] function.
 #[wasm_bindgen]
-pub fn create_segwit_bond_address(
-	network: &str,
+pub fn create_segwit_bond_spec(
 	pubkey: &str,
 	bond_value_sat: u64,
 	bond_asset: &str,
 	lock_time_unix: u64,
 	reclaim_pubkey: &str,
-) -> Result<JsValue, JsValue> {
-	let network = parse_elements_network(network)?;
+) -> Result<String, JsValue> {
 	let pubkey = pubkey.parse().map_err(|e| format!("invalid pubkey: {}", e))?;
 	let bond_value = Amount::from_sat(bond_value_sat);
 	let bond_asset = parse_asset_id(bond_asset)?;
 	let lock_time = lock_time_from_unix(lock_time_unix)?;
 	let reclaim_pubkey = reclaim_pubkey.parse().map_err(|e| format!("invalid pubkey: {}", e))?;
 
-
 	let spec = segwit::BondSpec { pubkey, bond_value, bond_asset, lock_time, reclaim_pubkey };
-	let (script, spk) = segwit::create_bond_script(&spec);
-	let addr = elements::Address::from_script(&spk, None, network).expect("legit script");
-	Ok(serde_wasm_bindgen::to_value(&json!({
-		"spec": BondSpec::Segwit(spec).to_base64(),
-		"address": addr.to_string(),
-		"witness_script": script.to_bytes().as_hex().to_string(),
-	})).unwrap())
+	Ok(BondSpec::Segwit(spec).to_base64())
 }
 
-/// Inspect a base64-encoded bond spec, an object is returned.
+/// Inspect a base64-encoded bond spec.
 ///
-/// The output is the same as when using the `doubletake inspect` CLI:
+/// Input:
+/// - `spec`: the base64 bond spec
 ///
+/// Output: object with following fields:
 /// - `type`: bond type
 /// - `pubkey`: public key holding the bond
 /// - `bond_value`: the value in satoshi
 /// - `bond_asset`: the asset ID
 /// - `lock_time`: the locktime of the expiry
 /// - `reclaim_pubkey`: the reclaim pubkey
+/// - `script_pubkey`: the script pubkey for the bond address
+/// - `witness_script`: the witness script used for the address
 #[wasm_bindgen]
 pub fn inspect_bond(spec: &str) -> Result<JsValue, JsValue> {
 	let spec = BondSpec::from_base64(&spec)
 		.map_err(|e| format!("invalid spec: {}", e))?;
-	Ok(serde_wasm_bindgen::to_value(&spec).unwrap())
+	let (ws, spk) = match spec {
+		BondSpec::Segwit(ref s) => segwit::create_bond_script(&s),
+	};
+	let mut json = serde_json::to_value(&spec).unwrap();
+	assert!(json.is_object());
+	let obj = json.as_object_mut().unwrap();
+	obj.insert("script_pubkey".into(), spk.to_bytes().as_hex().to_string().into());
+	obj.insert("witness_script".into(), ws.to_bytes().as_hex().to_string().into());
+	Ok(serde_wasm_bindgen::to_value(&json).unwrap())
+}
+
+/// Create a Liquid/Elements address for the bond, given the spec.
+///
+/// Input:
+/// - `spec`: the base64 encoded bond spec
+/// - `network`: "liquid", "liquidtestnet" or "elements"
+///
+/// Output: a Liquid/Elements address
+#[wasm_bindgen]
+pub fn bond_address(spec: &str, network: &str) -> Result<String, JsValue> {
+	let spec = BondSpec::from_base64(&spec)
+		.map_err(|e| format!("invalid spec: {}", e))?;
+	let network = parse_elements_network(network)?;
+	let (_, spk) = match spec {
+		BondSpec::Segwit(ref s) => segwit::create_bond_script(&s),
+	};
+	let addr = elements::Address::from_script(&spk, None, network).expect("valid spk");
+	Ok(addr.to_string())
 }
 
 /// Create a transaction to burn a bond.

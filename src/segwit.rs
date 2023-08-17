@@ -33,7 +33,7 @@ pub struct BondSpec {
 
 /// Creates the full bond script and respective scriptPubkey.
 ///
-/// First return value is the full script, second is the scriptPubkey.
+/// First return value is the full witness script, second is the scriptPubkey.
 pub fn create_bond_script(
 	spec: &BondSpec,
 ) -> (elements::Script, elements::Script) {
