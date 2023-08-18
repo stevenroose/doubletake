@@ -93,9 +93,11 @@ pub fn bond_address(spec: &str, network: &str) -> Result<String, JsValue> {
 /// Create a transaction to burn a bond.
 ///
 /// Input:
-/// - `utxo`: the Elements/Liquid UTXO in the format of [ElementsUtxo]
+/// - `bond_utxo`: the Elements/Liquid UTXO outpoint, as `<txid>:<vout>`
+/// - `bond_tx`: the raw hex bond transaction
 /// - `spec_base64`: bond spec encoded as base64
-/// - `double_spend_utxo`: the Bitcoin UTXO that was double spend in the format of [BitcoinUtxo]
+/// - `double_spend_utxo`: the Bitcoin UTXO outpoint that was double spent, as `<txid>:<vout>`
+/// - `double_spend_tx`: the Bitcoin tx that was double spent
 /// - `tx1_hex`: first double spend Bitcoin tx in hex
 /// - `tx2_hex`: second double spend Bitcoin tx in hex
 /// - `fee_rate_sat_per_vb`: the fee rate to use in satoshi per virtual byte
@@ -152,7 +154,8 @@ pub fn create_burn_tx(
 /// Create a transaction to reclaim a bond after it has expired.
 ///
 /// Input:
-/// - `utxo`: the Elements/Liquid UTXO in the format of [ElementsUtxo]
+/// - `bond_utxo`: the Elements/Liquid UTXO outpoint, as `<txid>:<vout>`
+/// - `bond_tx`: the raw hex bond transaction
 /// - `spec_base64`: bond spec encoded as base64
 /// - `fee_rate_sat_per_vb`: the fee rate to use in satoshi per virtual byte
 /// - `reclaim_sk`: secret key of the reclaim pubkey in either WIF or hex
