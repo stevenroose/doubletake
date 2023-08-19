@@ -90,6 +90,48 @@ pub fn bond_address(spec: &str, network: &str) -> Result<String, JsValue> {
 	Ok(addr.to_string())
 }
 
+/// Create a Bitcoin UTXO object to use as function argument.
+///
+/// Input:
+/// - `tx`: the raw tx in hex
+/// - `vout`: the output index of the utxo
+///
+/// Output: a [BitcoinUtxo] object
+#[wasm_bindgen]
+pub fn create_bitcoin_utxo(
+	tx: &str,
+	vout: usize,
+) -> Result<JsValue, JsValue> {
+	let tx = btc_deserialize_hex::<bitcoin::Transaction>(tx)
+		.map_err(|e| format!("invalid tx: {}", e))?;
+	let ret = BitcoinUtxo {
+		outpoint: bitcoin::OutPoint::new(tx.txid(), vout.try_into().expect("vout overflow")),
+		output: tx.output.get(vout).ok_or("vout invalid for tx: too few outputs")?.clone(),
+	};
+	Ok(serde_wasm_bindgen::to_value(&ret).unwrap())
+}
+
+/// Create an Elements/Liquid UTXO object to use as function argument.
+///
+/// Input:
+/// - `tx`: the raw tx in hex
+/// - `vout`: the output index of the utxo
+///
+/// Output: a [ElementsUtxo] object
+#[wasm_bindgen]
+pub fn create_elements_utxo(
+	tx: &str,
+	vout: usize,
+) -> Result<JsValue, JsValue> {
+	let tx = elem_deserialize_hex::<elements::Transaction>(tx)
+		.map_err(|e| format!("invalid tx: {}", e))?;
+	let ret = ElementsUtxo {
+		outpoint: elements::OutPoint::new(tx.txid(), vout.try_into().expect("vout overflow")),
+		output: tx.output.get(vout).ok_or("vout invalid for tx: too few outputs")?.clone(),
+	};
+	Ok(serde_wasm_bindgen::to_value(&ret).unwrap())
+}
+
 /// Create a transaction to burn a bond.
 ///
 /// Input:
@@ -106,36 +148,20 @@ pub fn bond_address(spec: &str, network: &str) -> Result<String, JsValue> {
 /// Output: an Elements/Liquid transaction in hex
 #[wasm_bindgen]
 pub fn create_burn_tx(
-	bond_utxo: &str,
-	bond_tx: &str,
+	bond_utxo: JsValue,
 	spec_base64: &str,
-	double_spend_utxo: &str,
-	double_spend_tx: &str,
+	double_spend_utxo: JsValue,
 	tx1_hex: &str,
 	tx2_hex: &str,
 	fee_rate_sat_per_vb: u64,
 	reward_address: &str,
 ) -> Result<String, JsValue> {
-	let utxo_outpoint = elements::OutPoint::from_str(bond_utxo)
-		.map_err(|e| format!("invalid bond UTXO outpoint: {}", e))?;
-	let utxo = ElementsUtxo {
-		outpoint: utxo_outpoint,
-		output: elem_deserialize_hex::<elements::Transaction>(bond_tx)
-			.map_err(|e| format!("invalid bond tx: {}", e))?
-			.output.get(utxo_outpoint.vout as usize)
-			.ok_or("bond tx and outpoint don't match")?.clone(),
-	};
+	let utxo = serde_wasm_bindgen::from_value(bond_utxo)
+		.map_err(|e| format!("invalid bond UTXO: {}", e))?;
 	let spec = BondSpec::from_base64(spec_base64)
 		.map_err(|e| format!("invalid spec: {}", e))?;
-	let double_spend_outpoint = bitcoin::OutPoint::from_str(double_spend_utxo)
-		.map_err(|e| format!("invalid bond UTXO: {}", e))?;
-	let double_spend_utxo = BitcoinUtxo {
-		outpoint: double_spend_outpoint,
-		output: btc_deserialize_hex::<bitcoin::Transaction>(double_spend_tx)
-			.map_err(|e| format!("invalid double spend tx: {}", e))?
-			.output.get(double_spend_outpoint.vout as usize)
-			.ok_or("double spend tx and outpoint don't match")?.clone(),
-	};
+	let double_spend_utxo = serde_wasm_bindgen::from_value(double_spend_utxo)
+		.map_err(|e| format!("invalid double spend UTXO: {}", e))?;
 	let tx1 = elem_deserialize_hex(tx1_hex)
 		.map_err(|e| format!("bad tx1_hex: {}", e))?;
 	let tx2 = elem_deserialize_hex(tx2_hex)
@@ -164,22 +190,14 @@ pub fn create_burn_tx(
 /// Output: an Elements/Liquid transaction in hex
 #[wasm_bindgen]
 pub fn create_reclaim_tx(
-	bond_utxo: &str,
-	bond_tx: &str,
+	bond_utxo: JsValue,
 	spec_base64: &str,
 	fee_rate_sat_per_vb: u64,
 	reclaim_sk: &str,
 	claim_address: &str,
 ) -> Result<String, JsValue> {
-	let utxo_outpoint = elements::OutPoint::from_str(bond_utxo)
-		.map_err(|e| format!("invalid bond UTXO outpoint: {}", e))?;
-	let utxo = ElementsUtxo {
-		outpoint: utxo_outpoint,
-		output: elem_deserialize_hex::<elements::Transaction>(bond_tx)
-			.map_err(|e| format!("invalid bond tx: {}", e))?
-			.output.get(utxo_outpoint.vout as usize)
-			.ok_or("bond tx and outpoint don't match")?.clone(),
-	};
+	let utxo = serde_wasm_bindgen::from_value(bond_utxo)
+		.map_err(|e| format!("invalid bond UTXO: {}", e))?;
 	let spec = BondSpec::from_base64(spec_base64)
 		.map_err(|e| format!("invalid spec: {}", e))?;
 	let fee_rate = FeeRate::from_sat_per_vb(fee_rate_sat_per_vb).ok_or_else(|| "invalid feerate")?;
