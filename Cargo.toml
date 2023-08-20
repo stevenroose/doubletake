@@ -20,7 +20,7 @@ required-features = ["cli"]
 default = ["cli"]
 serde = ["dep:serde", "bitcoin/serde", "elements/serde"]
 cli = ["clap", "serde", "serde_json"]
-wasm = ["wasm-bindgen", "serde", "serde_json", "serde-wasm-bindgen", "getrandom/js"]
+wasm = ["wasm-bindgen", "serde", "serde_json", "serde-wasm-bindgen", "console_error_panic_hook", "getrandom/js"]
 
 [dependencies]
 base64 = "0.13.0"
@@ -38,3 +38,4 @@ clap = { version = "4", features = [ "derive" ], optional = true }
 # wasm
 wasm-bindgen = { version = "0.2.87", optional = true }
 serde-wasm-bindgen = { version = "0.5.0", optional = true }
+console_error_panic_hook = { version = "0.1.7", optional = true }

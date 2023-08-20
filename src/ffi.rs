@@ -32,6 +32,7 @@ pub fn create_segwit_bond_spec(
 	lock_time_unix: u64,
 	reclaim_pubkey: &str,
 ) -> Result<String, JsValue> {
+	console_error_panic_hook::set_once();
 	let pubkey = pubkey.parse().map_err(|e| format!("invalid pubkey: {}", e))?;
 	let bond_value = Amount::from_sat(bond_value_sat);
 	let bond_asset = parse_asset_id(bond_asset)?;
@@ -58,6 +59,7 @@ pub fn create_segwit_bond_spec(
 /// - `witness_script`: the witness script used for the address
 #[wasm_bindgen]
 pub fn inspect_bond(spec: &str) -> Result<JsValue, JsValue> {
+	console_error_panic_hook::set_once();
 	let spec = BondSpec::from_base64(&spec)
 		.map_err(|e| format!("invalid spec: {}", e))?;
 	let (ws, spk) = match spec {
@@ -80,6 +82,7 @@ pub fn inspect_bond(spec: &str) -> Result<JsValue, JsValue> {
 /// Output: a Liquid/Elements address
 #[wasm_bindgen]
 pub fn bond_address(spec: &str, network: &str) -> Result<String, JsValue> {
+	console_error_panic_hook::set_once();
 	let spec = BondSpec::from_base64(&spec)
 		.map_err(|e| format!("invalid spec: {}", e))?;
 	let network = parse_elements_network(network)?;
@@ -102,6 +105,7 @@ pub fn create_bitcoin_utxo(
 	tx: &str,
 	vout: usize,
 ) -> Result<JsValue, JsValue> {
+	console_error_panic_hook::set_once();
 	let tx = btc_deserialize_hex::<bitcoin::Transaction>(tx)
 		.map_err(|e| format!("invalid tx: {}", e))?;
 	let ret = BitcoinUtxo {
@@ -123,6 +127,7 @@ pub fn create_elements_utxo(
 	tx: &str,
 	vout: usize,
 ) -> Result<JsValue, JsValue> {
+	console_error_panic_hook::set_once();
 	let tx = elem_deserialize_hex::<elements::Transaction>(tx)
 		.map_err(|e| format!("invalid tx: {}", e))?;
 	let ret = ElementsUtxo {
@@ -158,6 +163,7 @@ pub fn create_burn_tx(
 	fee_rate_sat_per_vb: u64,
 	reward_address: &str,
 ) -> Result<String, JsValue> {
+	console_error_panic_hook::set_once();
 	let utxo_outpoint = elements::OutPoint::from_str(bond_utxo)
 		.map_err(|e| format!("invalid bond UTXO outpoint: {}", e))?;
 	let utxo = ElementsUtxo {
@@ -213,6 +219,7 @@ pub fn create_reclaim_tx(
 	reclaim_sk: &str,
 	claim_address: &str,
 ) -> Result<String, JsValue> {
+	console_error_panic_hook::set_once();
 	let utxo_outpoint = elements::OutPoint::from_str(bond_utxo)
 		.map_err(|e| format!("invalid bond UTXO outpoint: {}", e))?;
 	let utxo = ElementsUtxo {
