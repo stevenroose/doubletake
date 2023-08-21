@@ -55,6 +55,19 @@ enum App {
 		/// The bond spec in base64.
 		spec: String,
 	},
+	/// Get the address for a bond.
+	#[command()]
+	Address {
+		/// The bond spec in base64.
+		spec: String,
+		/// The Elements/Liquid network to create an address for.
+		///
+		/// Possible options: "liquid", "liquidtestnet", "elements".
+		///
+		/// Default value: Liquid mainnet.
+		#[arg(long, default_value = "liquid", value_parser = parse_elements_network)]
+		network: &'static elements::AddressParams,
+	},
 	/// Burn a double spend bond by providing proof of a double spend
 	#[command()]
 	Burn {
@@ -137,8 +150,27 @@ fn inner_main() -> Result<(), String> {
 		App::Inspect { spec } => {
 			let spec = BondSpec::from_base64(&spec)
 				.map_err(|e| format!("invalid spec: {}", e))?;
-			serde_json::to_writer_pretty(::std::io::stdout(), &spec).unwrap();
+			let (ws, spk) = match spec {
+				BondSpec::Segwit(ref s) => doubletake::segwit::create_bond_script(&s),
+				_ => unreachable!(),
+			};
+			let mut json = serde_json::to_value(&spec).unwrap();
+			assert!(json.is_object());
+			let obj = json.as_object_mut().unwrap();
+			obj.insert("script_pubkey".into(), spk.to_bytes().as_hex().to_string().into());
+			obj.insert("witness_script".into(), ws.to_bytes().as_hex().to_string().into());
+			serde_json::to_writer_pretty(::std::io::stdout(), &json).unwrap();
 			println!();
+		},
+		App::Address { spec, network } => {
+			let spec = BondSpec::from_base64(&spec)
+				.map_err(|e| format!("invalid spec: {}", e))?;
+			let (_, spk) = match spec {
+				BondSpec::Segwit(ref s) => doubletake::segwit::create_bond_script(&s),
+				_ => unreachable!(),
+			};
+			let addr = elements::Address::from_script(&spk, None, network).expect("legit script");
+			println!("{}", addr);
 		},
 		App::Burn {
 			bond_utxo, bond_tx, spec, double_spend_utxo, double_spend_tx, tx1, tx2, feerate,
