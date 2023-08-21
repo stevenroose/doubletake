@@ -100,9 +100,6 @@ enum App {
 		/// The bond spec in base64.
 		#[arg(long)]
 		spec: String,
-		/// The secret key for the reclaim public key, in WIF or hex.
-		#[arg(long)]
-		reclaim_sk: String,
 		/// The address to send the claimed funds to.
 		#[arg(long)]
 		claim_address: elements::Address,
@@ -111,6 +108,9 @@ enum App {
 		/// Default value: 1 sat/vb
 		#[arg(long, default_value_t = 1)]
 		feerate: u64,
+		/// The secret key for the reclaim public key, in WIF or hex.
+		#[arg(long)]
+		reclaim_sk: Option<String>,
 	},
 }
 
@@ -191,11 +191,18 @@ fn inner_main() -> Result<(), String> {
 			let spec = BondSpec::from_base64(&spec)
 				.map_err(|e| format!("invalid spec: {}", e))?;
 			let fee_rate = FeeRate::from_sat_per_vb(feerate).ok_or_else(|| "invalid feerate")?;
-			let reclaim_sk = parse_secret_key(&reclaim_sk)?;
 
-			let tx = doubletake::create_reclaim_tx(
-				&utxo, &spec, fee_rate, &reclaim_sk, &claim_address,
-			)?;
+			let tx = if let Some(reclaim_sk) = reclaim_sk {
+				let reclaim_sk = parse_secret_key(&reclaim_sk)?;
+				doubletake::create_signed_ecdsa_reclaim_tx(
+					&utxo, &spec, fee_rate, &claim_address, &reclaim_sk,
+				)?
+			} else {
+				doubletake::create_unsigned_reclaim_tx(
+					&utxo, &spec, fee_rate, &claim_address,
+				)
+			};
+
 			println!("{}", elements::encode::serialize_hex(&tx));
 		},
 	}

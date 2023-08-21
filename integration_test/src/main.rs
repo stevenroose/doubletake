@@ -326,18 +326,17 @@ fn test_v0_with_random(
 			bond_utxo.outpoint,
 			bond_tx.as_ref().expect("can't use --cli without --regtest"),
 			&BondSpec::Segwit(bond_spec.clone()),
-			reclaim_sk,
 			&output,
 			FeeRate::from_sat_per_vb(1).unwrap(),
+			reclaim_sk,
 		)
 	} else {
-		doubletake::segwit::create_reclaim_tx(
-			secp,
+		doubletake::create_signed_ecdsa_reclaim_tx(
 			&bond_utxo,
-			&bond_spec,
+			&BondSpec::Segwit(bond_spec.clone()),
 			FeeRate::from_sat_per_vb(1).unwrap(),
+			&output,
 			&reclaim_sk,
-			&output.script_pubkey(),
 		).unwrap()
 	};
 
@@ -443,17 +442,17 @@ mod cli {
 		bond_utxo: elements::OutPoint,
 		bond_tx: &elements::Transaction,
 		spec: &BondSpec,
-		reclaim_sk: secp256k1::SecretKey,
 		claim_addr: &elements::Address,
 		fee_rate: FeeRate,
+		reclaim_sk: secp256k1::SecretKey,
 	) -> elements::Transaction {
 		let out = cmd(&["reclaim",
 			"--bond-utxo", &bond_utxo.to_string(),
 			"--bond-tx", &elements::encode::serialize_hex(bond_tx),
 			"--spec", &spec.to_base64(),
-			"--reclaim-sk", &reclaim_sk.display_secret().to_string(),
 			"--claim-address", &claim_addr.to_string(),
 			"--feerate", &fee_rate.to_sat_per_vb_ceil().to_string(),
+			"--reclaim-sk", &reclaim_sk.display_secret().to_string(),
 		]);
 		let mut bytes = hex_conservative::HexToBytesIter::new(
 			&out.split_whitespace().next().unwrap(),

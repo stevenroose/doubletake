@@ -4,7 +4,7 @@ use std::io::{self, Cursor, Seek};
 
 use bitcoin::{Amount, FeeRate, Weight};
 use bitcoin::hashes::Hash;
-use bitcoin::secp256k1::{self, PublicKey, Secp256k1, SecretKey};
+use bitcoin::secp256k1::{self, ecdsa, PublicKey, Secp256k1};
 use elements::AssetId;
 use elements::script::Builder;
 use elements::opcodes::all::*;
@@ -285,14 +285,24 @@ pub fn create_burn_tx(
 	Ok(ret)
 }
 
-pub fn create_reclaim_tx(
-	secp: &Secp256k1<impl secp256k1::Signing + secp256k1::Verification>,
+/// Calculate the maximum tx weight of the reclaim tx.
+fn max_reclaim_tx_weight(
+	unsigned_tx: &elements::Transaction,
+	bond_script: &elements::Script,
+) -> usize {
+	unsigned_tx.weight()
+		+ 8	     // basic non-empty witness structure
+		+ 1 + 72 // signature
+		+ 1      // FALSE witness element
+		+ 1 + bond_script.encoded_len()
+}
+
+pub fn create_unsigned_reclaim_tx(
 	bond_utxo: &ElementsUtxo,
 	spec: &BondSpec,
 	fee_rate: FeeRate,
-	reclaim_sk: &SecretKey,
 	output_spk: &elements::Script,
-) -> Result<elements::Transaction, &'static str> {
+) -> elements::Transaction {
 	let mut ret = elements::Transaction {
 		version: 2,
 		lock_time: spec.lock_time,
@@ -328,40 +338,40 @@ pub fn create_reclaim_tx(
 	assert_eq!(bond_utxo.output.script_pubkey, bond_spk,
 		"bond UTXO doesn't match expected bond scriptPubkey",
 	);
-	let max_tx_weight = ret.weight()
-		+ 8	     // basic non-empty witness structure
-		+ 1 + 72 // signature
-		+ 1      // FALSE witness element
-		+ 1 + bond_script.encoded_len();
+	let max_tx_weight = max_reclaim_tx_weight(&ret, &bond_script);
 	let fee = fee_rate * bitcoin::Weight::from_wu(max_tx_weight as u64);
 	let remaining = bond_utxo.output.value.explicit().unwrap() - fee.to_sat();
 	ret.output[0].value = elements::confidential::Value::Explicit(remaining);
 	ret.output[1].value = elements::confidential::Value::Explicit(fee.to_sat());
 
-	let mut shc = elements::sighash::SighashCache::new(&mut ret);
-	let sighash = shc.segwitv0_sighash(
-		0, &bond_script, bond_utxo.output.value, elements::EcdsaSighashType::All,
-	);
-	let sig = secp.sign_ecdsa(&sighash.into(), &reclaim_sk);
+	ret
+}
+
+pub fn finalize_reclaim_tx(
+	spec: &BondSpec,
+	mut tx: elements::Transaction,
+	sig: ecdsa::Signature,
+) -> elements::Transaction {
+	let (bond_script, _) = create_bond_script(spec);
 
 	// we only need push the signature since the pubkey is hardcoded, ofc
-	ret.input[0].witness.script_witness.push(
+	tx.input[0].witness.script_witness.push(
 		bitcoin::ecdsa::Signature::sighash_all(sig).to_vec(),
 	);
 	// this is the FALSE value that make us go into the CLTV clause
-	ret.input[0].witness.script_witness.push(vec![]);
+	tx.input[0].witness.script_witness.push(vec![]);
 
 	// add witnessScript at the end
-	ret.input[0].witness.script_witness.push(bond_script.to_bytes());
+	tx.input[0].witness.script_witness.push(bond_script.to_bytes());
 
 	// Check that our calculation made sense.
-	assert!(ret.weight() <= max_tx_weight,
-		"max_tx_weight: {}; actual: {}", max_tx_weight, ret.weight(),
+	let max_tx_weight = max_reclaim_tx_weight(&tx, &bond_script);
+	assert!(tx.weight() <= max_tx_weight,
+		"max_tx_weight: {}; actual: {}", max_tx_weight, tx.weight(),
 	);
 
-	Ok(ret)
+	tx
 }
-
 
 pub mod bitcoin_sighash {
 	use super::*;

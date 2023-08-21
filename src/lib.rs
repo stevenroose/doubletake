@@ -13,7 +13,7 @@ mod ffi;
 use std::{fmt, io};
 
 use bitcoin::{Amount, FeeRate};
-use bitcoin::secp256k1::{self, SecretKey};
+use bitcoin::secp256k1::{self, ecdsa, SecretKey};
 use elements::encode::{Decodable, Encodable};
 
 
@@ -149,7 +149,7 @@ impl BondSpec {
 }
 
 pub fn create_burn_tx(
-	utxo: &ElementsUtxo,
+	bond_utxo: &ElementsUtxo,
 	spec: &BondSpec,
 	double_spend_utxo: &BitcoinUtxo,
 	tx1: &bitcoin::Transaction,
@@ -161,27 +161,57 @@ pub fn create_burn_tx(
 	let tx = match spec {
 		BondSpec::Segwit(spec) => {
 			segwit::create_burn_tx(
-				&secp, utxo, spec, double_spend_utxo, tx1, tx2, fee_rate, reward_address,
+				&secp, bond_utxo, spec, double_spend_utxo, tx1, tx2, fee_rate, reward_address,
 			)?
 		}
 	};
 	Ok(tx)
 }
 
-pub fn create_reclaim_tx(
-	utxo: &ElementsUtxo,
+pub fn create_unsigned_reclaim_tx(
+	bond_utxo: &ElementsUtxo,
 	spec: &BondSpec,
 	fee_rate: FeeRate,
-	reclaim_sk: &SecretKey,
 	claim_address: &elements::Address,
-) -> Result<elements::Transaction, String> {
-	let secp = secp256k1::Secp256k1::new();
+) -> elements::Transaction {
+	match spec {
+		BondSpec::Segwit(spec) => {
+			segwit::create_unsigned_reclaim_tx(
+				bond_utxo, spec, fee_rate, &claim_address.script_pubkey(),
+			)
+		}
+	}
+}
+
+pub fn finalize_ecdsa_reclaim_tx(
+	spec: &BondSpec,
+	tx: elements::Transaction,
+	sig: ecdsa::Signature,
+) -> Result<elements::Transaction, &'static str> {
 	let tx = match spec {
 		BondSpec::Segwit(spec) => {
-			segwit::create_reclaim_tx(
-				&secp, utxo, spec, fee_rate, &reclaim_sk, &claim_address.script_pubkey(),
-			)?
+			segwit::finalize_reclaim_tx(spec, tx, sig)
 		}
 	};
 	Ok(tx)
+}
+
+pub fn create_signed_ecdsa_reclaim_tx(
+	bond_utxo: &ElementsUtxo,
+	spec: &BondSpec,
+	fee_rate: FeeRate,
+	claim_address: &elements::Address,
+	reclaim_sk: &SecretKey,
+) -> Result<elements::Transaction, &'static str> {
+	let secp = secp256k1::Secp256k1::signing_only();
+	let tx = create_unsigned_reclaim_tx(bond_utxo, spec, fee_rate, &claim_address);
+	let (bond_script, _) = match spec {
+		BondSpec::Segwit(spec) => segwit::create_bond_script(spec),
+	};
+	let mut shc = elements::sighash::SighashCache::new(&tx);
+	let sighash = shc.segwitv0_sighash(
+		0, &bond_script, bond_utxo.output.value, elements::EcdsaSighashType::All,
+	);
+	let sig = secp.sign_ecdsa(&sighash.into(), &reclaim_sk);
+	Ok(finalize_ecdsa_reclaim_tx(spec, tx, sig)?)
 }
