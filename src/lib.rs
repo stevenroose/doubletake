@@ -197,7 +197,7 @@ pub fn finalize_ecdsa_reclaim_tx(
 	Ok(tx)
 }
 
-pub fn create_ecdsa_reclaim_pset(
+pub fn create_reclaim_pset(
 	bond_utxo: &ElementsUtxo,
 	spec: &BondSpec,
 	fee_rate: FeeRate,
@@ -223,22 +223,22 @@ pub fn create_ecdsa_reclaim_pset(
 	ret
 }
 
-pub fn finalize_ecdsa_reclaim_pset(
+pub fn finalize_reclaim_pset(
 	spec: &BondSpec,
 	pset: &pset::PartiallySignedTransaction,
 ) -> Result<elements::Transaction, String> {
 	let unsigned_tx = pset.extract_tx().map_err(|e| format!("pset extract error: {}", e))?;
-	let reclaim_pk = match spec {
-		BondSpec::Segwit(spec) => spec.reclaim_pubkey,
-	};
-	let signature_bytes = pset.inputs().get(0)
-		.ok_or("pset has no inputs")?
-		.partial_sigs.get(&bitcoin::PublicKey::new(reclaim_pk))
-		.ok_or("partial signature for reclaim pubkey missing")?;
-	let signature = util::parse_ecdsa_signature_all(signature_bytes)
-		.map_err(|e| format!("invalid signature for reclaim key: {}", e))?;
 	let ret = match spec {
-		BondSpec::Segwit(spec) => segwit::finalize_reclaim_tx(spec, unsigned_tx, signature),
+		BondSpec::Segwit(spec) => {
+			let reclaim_pk = spec.reclaim_pubkey;
+			let signature_bytes = pset.inputs().get(0)
+				.ok_or("pset has no inputs")?
+				.partial_sigs.get(&bitcoin::PublicKey::new(reclaim_pk))
+				.ok_or("partial signature for reclaim pubkey missing")?;
+			let signature = util::parse_ecdsa_signature_all(signature_bytes)
+				.map_err(|e| format!("invalid signature for reclaim key: {}", e))?;
+			segwit::finalize_reclaim_tx(spec, unsigned_tx, signature)
+		},
 	};
 	Ok(ret)
 }

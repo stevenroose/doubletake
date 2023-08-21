@@ -257,10 +257,76 @@ pub fn finalize_ecdsa_reclaim_tx(
 		.map_err(|e| format!("invalid spec: {}", e))?;
 	let reclaim_tx = elem_deserialize_hex::<elements::Transaction>(reclaim_tx)
 		.map_err(|e| format!("invalid reclaim tx: {}", e))?;
-	let signature_bytes = Vec::<u8>::from_hex(signature).map_err(|_| "invalid signature hex")?;
-	let signature = crate::util::parse_ecdsa_signature_all(&signature_bytes)?;
+	let signature = {
+		let bytes = Vec::<u8>::from_hex(signature).map_err(|_| "invalid signature hex")?;
+		crate::util::parse_ecdsa_signature_all(&bytes)?
+	};
 
 	let ret = crate::finalize_ecdsa_reclaim_tx(&spec, reclaim_tx, signature)?;
+	Ok(elements::encode::serialize_hex(&ret))
+}
+
+/// Create a PSET to reclaim a bond after it has expired.
+///
+/// Input:
+/// - `bond_utxo`: the Elements/Liquid UTXO outpoint, as `<txid>:<vout>`
+/// - `bond_tx`: the raw hex bond transaction
+/// - `spec_base64`: bond spec encoded as base64
+/// - `fee_rate_sat_per_vb`: the fee rate to use in satoshi per virtual byte
+/// - `claim_address`: the claim Elements/Liquid address where to send the funds
+///
+/// Output: a PartiallySignedElementsTransaction in base64
+#[wasm_bindgen]
+pub fn create_reclaim_pset(
+	bond_utxo: &str,
+	bond_tx: &str,
+	spec_base64: &str,
+	fee_rate_sat_per_vb: u64,
+	claim_address: &str,
+) -> Result<String, JsValue> {
+	console_error_panic_hook::set_once();
+	let utxo_outpoint = elements::OutPoint::from_str(bond_utxo)
+		.map_err(|e| format!("invalid bond UTXO outpoint: {}", e))?;
+	let utxo = ElementsUtxo {
+		outpoint: utxo_outpoint,
+		output: elem_deserialize_hex::<elements::Transaction>(bond_tx)
+			.map_err(|e| format!("invalid bond tx: {}", e))?
+			.output.get(utxo_outpoint.vout as usize)
+			.ok_or("bond tx and outpoint don't match")?.clone(),
+	};
+	let spec = BondSpec::from_base64(spec_base64)
+		.map_err(|e| format!("invalid spec: {}", e))?;
+	let fee_rate = FeeRate::from_sat_per_vb(fee_rate_sat_per_vb).ok_or_else(|| "invalid feerate")?;
+	let claim_address = elements::Address::from_str(claim_address)
+		.map_err(|e| format!("invalid reward address: {}", e))?;
+
+	let pset = crate::create_reclaim_pset(&utxo, &spec, fee_rate, &claim_address);
+	let bytes = elements::encode::serialize(&pset);
+	Ok(base64::encode_config(&bytes, base64::STANDARD))
+}
+
+/// Finalize a reclaim PSET.
+///
+/// Input:
+/// - `spec_base64`: bond spec encoded as base64
+/// - `reclaim_pset`: the base64 reclaim PSET
+///
+/// Output: an Elements/Liquid transaction in hex
+#[wasm_bindgen]
+pub fn finalize_reclaim_pset(
+	spec_base64: &str,
+	reclaim_pset: &str,
+) -> Result<String, JsValue> {
+	let spec = BondSpec::from_base64(spec_base64)
+		.map_err(|e| format!("invalid spec: {}", e))?;
+	let pset = {
+		let bytes = base64::decode_config(reclaim_pset, base64::STANDARD)
+			.map_err(|e| format!("invalid base64 for pset: {}", e))?;
+		elements::encode::deserialize::<elements::pset::PartiallySignedTransaction>(&bytes)
+			.map_err(|e| format!("invalid pset: {}", e))?
+	};
+
+	let ret = crate::finalize_reclaim_pset(&spec, &pset)?;
 	Ok(elements::encode::serialize_hex(&ret))
 }
 

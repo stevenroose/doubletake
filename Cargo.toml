@@ -1,6 +1,6 @@
 [package]
 name = "doubletake"
-version = "0.0.0-alpha.10"
+version = "0.0.0-alpha.11"
 license = "CC0-1.0"
 edition = "2021"
 authors = [ "Steven Roose <steven@roose.io>", "James Dorfman" ]
@@ -20,7 +20,14 @@ required-features = ["cli"]
 default = ["cli"]
 serde = ["dep:serde", "bitcoin/serde", "elements/serde"]
 cli = ["clap", "serde", "serde_json"]
-wasm = ["wasm-bindgen", "serde", "serde_json", "serde-wasm-bindgen", "console_error_panic_hook", "getrandom/js"]
+wasm = [
+  "serde",
+  "serde_json",
+  "wasm-bindgen",
+  "serde-wasm-bindgen",
+  "console_error_panic_hook",
+  "getrandom/js",
+]
 
 [dependencies]
 base64 = "0.13.0"
