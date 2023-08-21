@@ -3,10 +3,32 @@
 use std::io;
 
 use bitcoin::Amount;
-use bitcoin::secp256k1::PublicKey;
+use bitcoin::secp256k1::{ecdsa, PublicKey};
 use elements::AssetId;
 use elements::opcodes::all::*;
 use elements::script::Builder;
+
+/// Parse an ECDSA signature from bytes that may or may not contain a sighash byte.
+/// 
+/// If it does, it must be ALL.
+pub fn parse_ecdsa_signature_all(bytes: &[u8]) -> Result<ecdsa::Signature, String> {
+	match ecdsa::Signature::from_der(bytes) {
+		Ok(s) => Ok(s),
+		Err(e) => {
+			// maybe it's serialized with sighash..
+			if let Ok(sig) = bitcoin::ecdsa::Signature::from_slice(bytes) {
+				let ht = sig.hash_ty;
+				if ht != bitcoin::sighash::EcdsaSighashType::All {
+					Err(format!("signature contains sighash type that is not ALL: {}", ht))
+				} else {
+					Ok(sig.sig)
+				}
+			} else {
+				Err(format!("invalid signature: {}", e))
+			}
+		}
+	}
+}
 
 /// Divide a large byte push into at most [n] pushes.
 ///

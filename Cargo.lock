@@ -182,7 +182,7 @@ dependencies = [
 
 [[package]]
 name = "doubletake"
-version = "0.0.0-alpha.8"
+version = "0.0.0-alpha.10"
 dependencies = [
  "base64",
  "bitcoin",

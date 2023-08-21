@@ -5,9 +5,9 @@
 use std::str::FromStr;
 
 use bitcoin::{Amount, FeeRate};
-use bitcoin::secp256k1::{ecdsa, SecretKey};
+use bitcoin::secp256k1::SecretKey;
 use elements::AssetId;
-use hex_conservative::DisplayHex;
+use hex_conservative::{DisplayHex, FromHex};
 use wasm_bindgen::prelude::*;
 
 use crate::{segwit, BitcoinUtxo, BondSpec, ElementsUtxo};
@@ -257,23 +257,8 @@ pub fn finalize_ecdsa_reclaim_tx(
 		.map_err(|e| format!("invalid spec: {}", e))?;
 	let reclaim_tx = elem_deserialize_hex::<elements::Transaction>(reclaim_tx)
 		.map_err(|e| format!("invalid reclaim tx: {}", e))?;
-	let signature = match ecdsa::Signature::from_str(signature) {
-		Ok(s) => s,
-		Err(e) => {
-			// maybe it's serialized with sighash..
-			if let Ok(sig) = bitcoin::ecdsa::Signature::from_str(signature) {
-				if sig.hash_ty != bitcoin::sighash::EcdsaSighashType::All {
-					return Err(format!(
-						"signature contains sighash type that is not ALL: {}", sig.hash_ty,
-					))?;
-				} else {
-					sig.sig
-				}
-			} else {
-				return Err(format!("invalid signature: {}", e))?;
-			}
-		}
-	};
+	let signature_bytes = Vec::<u8>::from_hex(signature).map_err(|_| "invalid signature hex")?;
+	let signature = crate::util::parse_ecdsa_signature_all(&signature_bytes)?;
 
 	let ret = crate::finalize_ecdsa_reclaim_tx(&spec, reclaim_tx, signature)?;
 	Ok(elements::encode::serialize_hex(&ret))

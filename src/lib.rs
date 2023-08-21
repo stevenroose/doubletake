@@ -15,6 +15,7 @@ use std::{fmt, io};
 use bitcoin::{Amount, FeeRate};
 use bitcoin::secp256k1::{self, ecdsa, SecretKey};
 use elements::encode::{Decodable, Encodable};
+use elements::pset;
 
 
 /// A UTXO on the Bitcoin network.
@@ -194,6 +195,52 @@ pub fn finalize_ecdsa_reclaim_tx(
 		}
 	};
 	Ok(tx)
+}
+
+pub fn create_ecdsa_reclaim_pset(
+	bond_utxo: &ElementsUtxo,
+	spec: &BondSpec,
+	fee_rate: FeeRate,
+	claim_address: &elements::Address,
+) -> pset::PartiallySignedTransaction {
+	let (tx, bond_script) = match spec {
+		BondSpec::Segwit(spec) => {
+			let tx = segwit::create_unsigned_reclaim_tx(
+				bond_utxo, spec, fee_rate, &claim_address.script_pubkey(),
+			);
+			let (bond_script, _) = segwit::create_bond_script(spec);
+			(tx, bond_script)
+		}
+	};
+	let mut ret = pset::PartiallySignedTransaction::from_tx(tx);
+	assert_eq!(ret.inputs().len(), 1);
+
+	let input = &mut ret.inputs_mut()[0];
+	input.witness_utxo = Some(bond_utxo.output.clone());
+	input.sighash_type = Some(elements::EcdsaSighashType::All.into());
+	input.witness_script = Some(bond_script);
+
+	ret
+}
+
+pub fn finalize_ecdsa_reclaim_pset(
+	spec: &BondSpec,
+	pset: &pset::PartiallySignedTransaction,
+) -> Result<elements::Transaction, String> {
+	let unsigned_tx = pset.extract_tx().map_err(|e| format!("pset extract error: {}", e))?;
+	let reclaim_pk = match spec {
+		BondSpec::Segwit(spec) => spec.reclaim_pubkey,
+	};
+	let signature_bytes = pset.inputs().get(0)
+		.ok_or("pset has no inputs")?
+		.partial_sigs.get(&bitcoin::PublicKey::new(reclaim_pk))
+		.ok_or("partial signature for reclaim pubkey missing")?;
+	let signature = util::parse_ecdsa_signature_all(signature_bytes)
+		.map_err(|e| format!("invalid signature for reclaim key: {}", e))?;
+	let ret = match spec {
+		BondSpec::Segwit(spec) => segwit::finalize_reclaim_tx(spec, unsigned_tx, signature),
+	};
+	Ok(ret)
 }
 
 pub fn create_signed_ecdsa_reclaim_tx(
