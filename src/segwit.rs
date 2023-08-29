@@ -323,7 +323,6 @@ pub fn create_unsigned_reclaim_tx(
 				amount_rangeproof: None,
 				inflation_keys_rangeproof: None,
 				pegin_witness: Vec::new(),
-				// we will fill this later
 				script_witness: Vec::new(),
 			},
 		}],
@@ -360,17 +359,19 @@ pub fn finalize_reclaim_tx(
 	mut tx: elements::Transaction,
 	sig: ecdsa::Signature,
 ) -> elements::Transaction {
-	let (bond_script, _) = create_bond_script(spec);
+	let mut witness = Vec::with_capacity(3);
 
 	// we only need push the signature since the pubkey is hardcoded, ofc
-	tx.input[0].witness.script_witness.push(
-		bitcoin::ecdsa::Signature::sighash_all(sig).to_vec(),
-	);
+	witness.push(bitcoin::ecdsa::Signature::sighash_all(sig).to_vec());
+
 	// this is the FALSE value that make us go into the CLTV clause
-	tx.input[0].witness.script_witness.push(vec![]);
+	witness.push(vec![]);
 
 	// add witnessScript at the end
-	tx.input[0].witness.script_witness.push(bond_script.to_bytes());
+	let (bond_script, _) = create_bond_script(spec);
+	witness.push(bond_script.to_bytes());
+
+	tx.input[0].witness.script_witness = witness;
 
 	// Check that our calculation made sense.
 	let max_tx_weight = max_reclaim_tx_weight(&tx, &bond_script);
