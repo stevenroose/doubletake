@@ -149,7 +149,7 @@ pub fn create_elements_utxo(
 /// - `double_spend_tx`: the Bitcoin tx that was double spent
 /// - `tx1_hex`: first double spend Bitcoin tx in hex
 /// - `tx2_hex`: second double spend Bitcoin tx in hex
-/// - `fee_rate_sat_per_vb`: the fee rate to use in satoshi per virtual byte
+/// - `fee_rate_sat_per_vkb`: the fee rate to use in satoshi per virtual byte
 /// - `reward_address`: the reward Elements/Liquid address where to send the reward
 ///
 /// Output: an Elements/Liquid transaction in hex
@@ -162,7 +162,7 @@ pub fn create_burn_tx(
 	double_spend_tx: &str,
 	tx1_hex: &str,
 	tx2_hex: &str,
-	fee_rate_sat_per_vb: u64,
+	fee_rate_sat_per_vkb: u64,
 	reward_address: &str,
 ) -> Result<String, JsValue> {
 	console_error_panic_hook::set_once();
@@ -190,8 +190,7 @@ pub fn create_burn_tx(
 		.map_err(|e| format!("bad tx1_hex: {}", e))?;
 	let tx2 = elem_deserialize_hex(tx2_hex)
 		.map_err(|e| format!("bad tx2_hex: {}", e))?;
-	let fee_rate = FeeRate::from_sat_per_vb(fee_rate_sat_per_vb)
-		.ok_or_else(|| "invalid feerate")?;
+	let fee_rate = FeeRate::from_sat_per_kwu(fee_rate_sat_per_vkb / 4);
 	let reward_address = elements::Address::from_str(reward_address)
 		.map_err(|e| format!("invalid reward address: {}", e))?;
 
@@ -207,7 +206,7 @@ pub fn create_burn_tx(
 /// - `bond_utxo`: the Elements/Liquid UTXO outpoint, as `<txid>:<vout>`
 /// - `bond_tx`: the raw hex bond transaction
 /// - `spec_base64`: bond spec encoded as base64
-/// - `fee_rate_sat_per_vb`: the fee rate to use in satoshi per virtual byte
+/// - `fee_rate_sat_per_vkb`: the fee rate to use in satoshi per virtual kilobyte
 /// - `claim_address`: the claim Elements/Liquid address where to send the funds
 ///
 /// Output: an Elements/Liquid transaction in hex
@@ -216,7 +215,7 @@ pub fn create_unsigned_reclaim_tx(
 	bond_utxo: &str,
 	bond_tx: &str,
 	spec_base64: &str,
-	fee_rate_sat_per_vb: u64,
+	fee_rate_sat_per_vkb: u64,
 	claim_address: &str,
 ) -> Result<String, JsValue> {
 	console_error_panic_hook::set_once();
@@ -231,7 +230,7 @@ pub fn create_unsigned_reclaim_tx(
 	};
 	let spec = BondSpec::from_base64(spec_base64)
 		.map_err(|e| format!("invalid spec: {}", e))?;
-	let fee_rate = FeeRate::from_sat_per_vb(fee_rate_sat_per_vb).ok_or_else(|| "invalid feerate")?;
+	let fee_rate = FeeRate::from_sat_per_kwu(fee_rate_sat_per_vkb / 4);
 	let claim_address = elements::Address::from_str(claim_address)
 		.map_err(|e| format!("invalid reward address: {}", e))?;
 

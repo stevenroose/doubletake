@@ -95,10 +95,10 @@ enum App {
 		/// The Elements/Liquid address to send the reward to.
 		#[arg(long)]
 		reward_address: elements::Address,
-		/// The fee rate for the resulting tx in satoshi per virtual byte.
+		/// The fee rate for the resulting tx in satoshi per virtual kilobyte.
 		///
-		/// Default value: 1 sat/vb
-		#[arg(long, default_value_t = 1)]
+		/// Default value: 1000 sat/vkb (1 sat/vb)
+		#[arg(long, default_value_t = 1000)]
 		feerate: u64,
 	},
 	/// Reclaim your bond after it has expired.
@@ -116,10 +116,10 @@ enum App {
 		/// The address to send the claimed funds to.
 		#[arg(long)]
 		claim_address: elements::Address,
-		/// The fee rate for the resulting tx in satoshi per virtual byte.
+		/// The fee rate for the resulting tx in satoshi per virtual kilobyte.
 		///
-		/// Default value: 1 sat/vb
-		#[arg(long, default_value_t = 1)]
+		/// Default value: 1000 sat/vkb (1 sat/vb)
+		#[arg(long, default_value_t = 1000)]
 		feerate: u64,
 		/// The secret key for the reclaim public key, in WIF or hex.
 		#[arg(long)]
@@ -202,7 +202,7 @@ fn inner_main() -> Result<(), String> {
 				.map_err(|e| format!("bad tx1 hex: {}", e))?;
 			let tx2 = elem_deserialize_hex(&tx2)
 				.map_err(|e| format!("bad tx2 hex: {}", e))?;
-			let fee_rate = FeeRate::from_sat_per_vb(feerate).ok_or_else(|| "invalid feerate")?;
+			let fee_rate = FeeRate::from_sat_per_kwu(feerate / 4);
 
 			let tx = doubletake::create_burn_tx(
 				&utxo, &spec, &double_spend_utxo, &tx1, &tx2, fee_rate, &reward_address,
@@ -222,7 +222,7 @@ fn inner_main() -> Result<(), String> {
 			};
 			let spec = BondSpec::from_base64(&spec)
 				.map_err(|e| format!("invalid spec: {}", e))?;
-			let fee_rate = FeeRate::from_sat_per_vb(feerate).ok_or_else(|| "invalid feerate")?;
+			let fee_rate = FeeRate::from_sat_per_kwu(feerate / 4);
 
 			let tx = if let Some(reclaim_sk) = reclaim_sk {
 				let reclaim_sk = parse_secret_key(&reclaim_sk)?;
