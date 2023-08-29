@@ -350,10 +350,10 @@ fn test_v0_with_random(
 }
 
 fn verify_tx_elementsconsensus(
-	script: &elements::Script,
-	value: &elements::confidential::Value,
-	index: usize,
-	transaction: &elements::Transaction,
+	_script: &elements::Script,
+	_value: &elements::confidential::Value,
+	_index: usize,
+	_transaction: &elements::Transaction,
 ) -> Result<(), String> {
 	// use elements_consensus::elements::encode::deserialize;
 	// use elements::encode::serialize;
