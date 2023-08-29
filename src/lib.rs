@@ -157,16 +157,16 @@ pub fn create_burn_tx(
 	tx2: &bitcoin::Transaction,
 	fee_rate: FeeRate,
 	reward_address: &elements::Address,
-) -> Result<elements::Transaction, String> {
+) -> Result<elements::Transaction, &'static str> {
 	let secp = secp256k1::Secp256k1::new();
-	let tx = match spec {
+	let ret = match spec {
 		BondSpec::Segwit(spec) => {
 			segwit::create_burn_tx(
 				&secp, bond_utxo, spec, double_spend_utxo, tx1, tx2, fee_rate, reward_address,
 			)?
 		}
 	};
-	Ok(tx)
+	Ok(ret)
 }
 
 pub fn create_unsigned_reclaim_tx(
@@ -174,14 +174,16 @@ pub fn create_unsigned_reclaim_tx(
 	spec: &BondSpec,
 	fee_rate: FeeRate,
 	claim_address: &elements::Address,
-) -> elements::Transaction {
-	match spec {
+) -> Result<elements::Transaction, &'static str> {
+	let ret = match spec {
 		BondSpec::Segwit(spec) => {
 			segwit::create_unsigned_reclaim_tx(
 				bond_utxo, spec, fee_rate, &claim_address.script_pubkey(),
-			)
+			)?
 		}
-	}
+	};
+
+	Ok(ret)
 }
 
 pub fn finalize_ecdsa_reclaim_tx(
@@ -202,12 +204,12 @@ pub fn create_reclaim_pset(
 	spec: &BondSpec,
 	fee_rate: FeeRate,
 	claim_address: &elements::Address,
-) -> pset::PartiallySignedTransaction {
+) -> Result<pset::PartiallySignedTransaction, &'static str> {
 	let (tx, bond_script) = match spec {
 		BondSpec::Segwit(spec) => {
 			let tx = segwit::create_unsigned_reclaim_tx(
 				bond_utxo, spec, fee_rate, &claim_address.script_pubkey(),
-			);
+			)?;
 			let (bond_script, _) = segwit::create_bond_script(spec);
 			(tx, bond_script)
 		}
@@ -220,7 +222,7 @@ pub fn create_reclaim_pset(
 	input.sighash_type = Some(elements::EcdsaSighashType::All.into());
 	input.witness_script = Some(bond_script);
 
-	ret
+	Ok(ret)
 }
 
 pub fn finalize_reclaim_pset(
@@ -251,7 +253,7 @@ pub fn create_signed_ecdsa_reclaim_tx(
 	reclaim_sk: &SecretKey,
 ) -> Result<elements::Transaction, &'static str> {
 	let secp = secp256k1::Secp256k1::signing_only();
-	let tx = create_unsigned_reclaim_tx(bond_utxo, spec, fee_rate, &claim_address);
+	let tx = create_unsigned_reclaim_tx(bond_utxo, spec, fee_rate, &claim_address)?;
 	let (bond_script, _) = match spec {
 		BondSpec::Segwit(spec) => segwit::create_bond_script(spec),
 	};

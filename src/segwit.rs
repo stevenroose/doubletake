@@ -240,9 +240,9 @@ pub fn create_burn_tx(
 	};
 
 	let (bond_script, bond_spk) = create_bond_script(spec);
-	assert_eq!(bond_utxo.output.script_pubkey, bond_spk,
-		"bond UTXO doesn't match expected bond scriptPubkey",
-	);
+	if bond_utxo.output.script_pubkey != bond_spk {
+		return Err("bond UTXO doesn't match expected bond scriptPubkey");
+	}
 
 	// calculate the fee so we know what we can add a claim output
 	let total_tx_weight = 1777 // this value is just hardcoded all the fixed parts
@@ -264,7 +264,9 @@ pub fn create_burn_tx(
 	ret.output[2].value = elements::confidential::Value::Explicit(fee.to_sat());
 	ret.output[1].value = elements::confidential::Value::Explicit(change);
 
-	// create a nums key and sign the tx
+	// Then we construct the witness to the bond smart contract.
+	// We add the items in reverse order because that's easier to reason about
+	// we then reverse the witness before we add the witnessScript in the end.
 
 	let mut witness = Vec::with_capacity(1 + 6 + 6 + 5 + 1);
 	witness.push(vec![1]); // this is the TRUE for the IF
@@ -307,7 +309,7 @@ pub fn create_unsigned_reclaim_tx(
 	spec: &BondSpec,
 	fee_rate: FeeRate,
 	output_spk: &elements::Script,
-) -> elements::Transaction {
+) -> Result<elements::Transaction, &'static str> {
 	let mut ret = elements::Transaction {
 		version: 2,
 		lock_time: spec.lock_time,
@@ -340,16 +342,16 @@ pub fn create_unsigned_reclaim_tx(
 	};
 
 	let (bond_script, bond_spk) = create_bond_script(spec);
-	assert_eq!(bond_utxo.output.script_pubkey, bond_spk,
-		"bond UTXO doesn't match expected bond scriptPubkey",
-	);
+	if bond_utxo.output.script_pubkey != bond_spk {
+		return Err("bond UTXO doesn't match expected bond scriptPubkey");
+	}
 	let max_tx_weight = max_reclaim_tx_weight(&ret, &bond_script);
 	let fee = fee_rate * bitcoin::Weight::from_wu(max_tx_weight as u64);
 	let remaining = bond_utxo.output.value.explicit().unwrap() - fee.to_sat();
 	ret.output[0].value = elements::confidential::Value::Explicit(remaining);
 	ret.output[1].value = elements::confidential::Value::Explicit(fee.to_sat());
 
-	ret
+	Ok(ret)
 }
 
 pub fn finalize_reclaim_tx(

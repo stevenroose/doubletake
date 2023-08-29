@@ -234,7 +234,7 @@ pub fn create_unsigned_reclaim_tx(
 	let claim_address = elements::Address::from_str(claim_address)
 		.map_err(|e| format!("invalid reward address: {}", e))?;
 
-	let tx = crate::create_unsigned_reclaim_tx(&utxo, &spec, fee_rate, &claim_address);
+	let tx = crate::create_unsigned_reclaim_tx(&utxo, &spec, fee_rate, &claim_address)?;
 	Ok(elements::encode::serialize_hex(&tx))
 }
 
@@ -299,7 +299,7 @@ pub fn create_reclaim_pset(
 	let claim_address = elements::Address::from_str(claim_address)
 		.map_err(|e| format!("invalid reward address: {}", e))?;
 
-	let pset = crate::create_reclaim_pset(&utxo, &spec, fee_rate, &claim_address);
+	let pset = crate::create_reclaim_pset(&utxo, &spec, fee_rate, &claim_address)?;
 	let bytes = elements::encode::serialize(&pset);
 	Ok(base64::encode_config(&bytes, base64::STANDARD))
 }

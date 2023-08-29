@@ -232,7 +232,7 @@ fn inner_main() -> Result<(), String> {
 			} else {
 				doubletake::create_unsigned_reclaim_tx(
 					&utxo, &spec, fee_rate, &claim_address,
-				)
+				)?
 			};
 
 			println!("{}", elements::encode::serialize_hex(&tx));
