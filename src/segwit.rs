@@ -347,7 +347,8 @@ pub fn create_unsigned_reclaim_tx(
 	}
 	let max_tx_weight = max_reclaim_tx_weight(&ret, &bond_script);
 	let fee = fee_rate * bitcoin::Weight::from_wu(max_tx_weight as u64);
-	let remaining = bond_utxo.output.value.explicit().unwrap() - fee.to_sat();
+	let in_value = bond_utxo.output.value.explicit().ok_or("broken bond: blinded value")?;
+	let remaining = in_value.checked_sub(fee.to_sat()).ok_or("fee higher than input amount")?;
 	ret.output[0].value = elements::confidential::Value::Explicit(remaining);
 	ret.output[1].value = elements::confidential::Value::Explicit(fee.to_sat());
 
