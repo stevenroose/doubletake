@@ -255,7 +255,12 @@ pub fn create_burn_tx(
 		+ bond_script.encoded_len()
 		+ ret.output[1..].to_vec().encoded_len();
 	let fee = fee_rate * Weight::from_wu(total_tx_weight as u64);
-	let change = bond_utxo.output.value.explicit().unwrap() - spec.bond_value.to_sat() - fee.to_sat();
+	let in_value = bond_utxo.output.value.explicit()
+		.ok_or("broken bond: blinded value")?;
+	let reward_budget = in_value.checked_sub(spec.bond_value.to_sat())
+		.ok_or("broken bond: burn value higher than utxo value")?;
+	let change = reward_budget.checked_sub(fee.to_sat())
+		.ok_or("not enough money for fee, try lower feerate")?;
 	ret.output[2].value = elements::confidential::Value::Explicit(fee.to_sat());
 	ret.output[1].value = elements::confidential::Value::Explicit(change);
 
