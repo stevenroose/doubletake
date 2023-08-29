@@ -13,7 +13,7 @@ mod ffi;
 use std::{fmt, io};
 
 use bitcoin::{Amount, FeeRate};
-use bitcoin::secp256k1::{self, ecdsa, SecretKey};
+use bitcoin::secp256k1::{self, ecdsa, Secp256k1, SecretKey};
 use elements::encode::{Decodable, Encodable};
 use elements::pset;
 
@@ -150,6 +150,7 @@ impl BondSpec {
 }
 
 pub fn create_burn_tx(
+	secp: &Secp256k1<impl secp256k1::Signing + secp256k1::Verification>,
 	bond_utxo: &ElementsUtxo,
 	spec: &BondSpec,
 	double_spend_utxo: &BitcoinUtxo,
@@ -158,7 +159,6 @@ pub fn create_burn_tx(
 	fee_rate: FeeRate,
 	reward_address: &elements::Address,
 ) -> Result<elements::Transaction, &'static str> {
-	let secp = secp256k1::Secp256k1::new();
 	let ret = match spec {
 		BondSpec::Segwit(spec) => {
 			segwit::create_burn_tx(
@@ -246,13 +246,13 @@ pub fn finalize_reclaim_pset(
 }
 
 pub fn create_signed_ecdsa_reclaim_tx(
+	secp: &Secp256k1<impl secp256k1::Signing>,
 	bond_utxo: &ElementsUtxo,
 	spec: &BondSpec,
 	fee_rate: FeeRate,
 	claim_address: &elements::Address,
 	reclaim_sk: &SecretKey,
 ) -> Result<elements::Transaction, &'static str> {
-	let secp = secp256k1::Secp256k1::signing_only();
 	let tx = create_unsigned_reclaim_tx(bond_utxo, spec, fee_rate, &claim_address)?;
 	let (bond_script, _) = match spec {
 		BondSpec::Segwit(spec) => segwit::create_bond_script(spec),

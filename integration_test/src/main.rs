@@ -332,6 +332,7 @@ fn test_v0_with_random(
 		)
 	} else {
 		doubletake::create_signed_ecdsa_reclaim_tx(
+			&secp,
 			&bond_utxo,
 			&BondSpec::Segwit(bond_spec.clone()),
 			FeeRate::from_sat_per_vb(1).unwrap(),

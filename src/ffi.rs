@@ -5,7 +5,7 @@
 use std::str::FromStr;
 
 use bitcoin::{Amount, FeeRate};
-use bitcoin::secp256k1::SecretKey;
+use bitcoin::secp256k1::{Secp256k1, SecretKey};
 use elements::AssetId;
 use hex_conservative::{DisplayHex, FromHex};
 use wasm_bindgen::prelude::*;
@@ -194,8 +194,9 @@ pub fn create_burn_tx(
 	let reward_address = elements::Address::from_str(reward_address)
 		.map_err(|e| format!("invalid reward address: {}", e))?;
 
+	let secp = Secp256k1::new();
 	let tx = crate::create_burn_tx(
-		&utxo, &spec, &double_spend_utxo, &tx1, &tx2, fee_rate, &reward_address,
+		&secp, &utxo, &spec, &double_spend_utxo, &tx1, &tx2, fee_rate, &reward_address,
 	)?;
 	Ok(elements::encode::serialize_hex(&tx))
 }
@@ -366,8 +367,9 @@ pub fn create_signed_ecdsa_reclaim_tx(
 	let claim_address = elements::Address::from_str(claim_address)
 		.map_err(|e| format!("invalid reward address: {}", e))?;
 
+	let secp = Secp256k1::signing_only();
 	let tx = crate::create_signed_ecdsa_reclaim_tx(
-		&utxo, &spec, fee_rate, &claim_address, &reclaim_sk,
+		&secp, &utxo, &spec, fee_rate, &claim_address, &reclaim_sk,
 	)?;
 	Ok(elements::encode::serialize_hex(&tx))
 }

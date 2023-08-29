@@ -4,7 +4,7 @@
 use std::str::FromStr;
 
 use bitcoin::{Amount, FeeRate};
-use bitcoin::secp256k1::{PublicKey, SecretKey};
+use bitcoin::secp256k1::{PublicKey, Secp256k1, SecretKey};
 use clap::Parser;
 use elements::AssetId;
 use serde_json::json;
@@ -204,8 +204,9 @@ fn inner_main() -> Result<(), String> {
 				.map_err(|e| format!("bad tx2 hex: {}", e))?;
 			let fee_rate = FeeRate::from_sat_per_kwu(feerate / 4);
 
+			let secp = Secp256k1::new();
 			let tx = doubletake::create_burn_tx(
-				&utxo, &spec, &double_spend_utxo, &tx1, &tx2, fee_rate, &reward_address,
+				&secp, &utxo, &spec, &double_spend_utxo, &tx1, &tx2, fee_rate, &reward_address,
 			)?;
 			println!("{}", elements::encode::serialize_hex(&tx));
 		},
@@ -226,8 +227,9 @@ fn inner_main() -> Result<(), String> {
 
 			let tx = if let Some(reclaim_sk) = reclaim_sk {
 				let reclaim_sk = parse_secret_key(&reclaim_sk)?;
+				let secp = Secp256k1::signing_only();
 				doubletake::create_signed_ecdsa_reclaim_tx(
-					&utxo, &spec, fee_rate, &claim_address, &reclaim_sk,
+					&secp, &utxo, &spec, fee_rate, &claim_address, &reclaim_sk,
 				)?
 			} else {
 				doubletake::create_unsigned_reclaim_tx(
