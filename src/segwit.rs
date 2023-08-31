@@ -16,6 +16,14 @@ use crate::util::{self, BitcoinEncodableExt, BuilderExt, ElementsEncodableExt, R
 use self::bitcoin_sighash::SegwitBitcoinSighashBuilder;
 use self::burn_covenant::SegwitBurnCovenantBuilder;
 
+/// The maximum size of the scriptCode that the bond can have effect on.
+/// For users, this is an important value because they cannot trust any p2wsh
+/// output that has a witness script larger than this value.
+///
+/// This value is calculated so that the entire sighash data fits within the 520
+/// max stack item size limit.
+pub const MAX_SCRIPTCODE_LEN: usize = 520 - ( 4 + 32 + 32 + 36 + 8 + 4 + 32 + 4 + 4 );
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 pub struct BondSpec {
@@ -84,7 +92,7 @@ pub fn create_bond_script(
 
 		.into_script();
 
-	let expected_len = 323
+	let expected_len = 263
 		+ util::scriptint_size(spec.lock_time.to_consensus_u32() as i64);
 	assert_eq!(expected_len, script.len());
 
@@ -135,6 +143,9 @@ impl<'a> SpendData<'a> {
 		let script_code = determine_scriptcode(
 			&utxo.output.script_pubkey, &tx.input[input_idx].witness,
 		)?;
+		if script_code.as_script().encoded_len() > MAX_SCRIPTCODE_LEN {
+			return Err("scriptCode too large");
+		}
 
 		let sig = tx.input[input_idx].witness.iter()
 			// first filter valid signatures
@@ -245,7 +256,7 @@ pub fn create_burn_tx(
 	}
 
 	// calculate the fee so we know what we can add a claim output
-	let total_tx_weight = 1777 // this value is just hardcoded all the fixed parts
+	let total_tx_weight = 1687 // this value is just hardcoded all the fixed parts
 		+ spend1.script_code.as_script().len()
 		+ spend2.script_code.as_script().len()
 		+ reward_address.script_pubkey().encoded_len()
@@ -385,6 +396,12 @@ pub fn finalize_reclaim_tx(
 pub mod bitcoin_sighash {
 	use super::*;
 
+	/// Number of stack items we have to provide for the stack element
+	/// containing the scriptCode.
+	///
+	/// The total item size is 376 bytes (max scriptCode len + 12).
+	const SCRIPTCODE_SECTION_ITEMS: usize = 5;
+
 	pub trait SegwitBitcoinSighashBuilder: BuilderExt {
 		/// Check that the input is a valid *Bitcoin* sighash in the following format
 		/// and a correct corresponding signature.
@@ -414,13 +431,14 @@ pub mod bitcoin_sighash {
 				.push_opcode(OP_SWAP)
 				.push_opcode(OP_CAT)
 				// the next element is <script-code><value><sequence>
-				// This is variable in size, with a maximum length
-				// of 10,000 + 8 + 4 bytes. With a maximum stack element
-				// size of 520 bytes, this means we need to provide 20
-				// stack elements for the user to push this push.
-				// Ofc usually, 19 of them will be empty.
+				// This is variable in size, with a maximum length is 376 bytes
+				// (max scriptCode len + 12). With a maximum standard stack
+				// element size of 80 bytes, this means we need to provide 5
+				// stack elements for the user to add this section.
+				// Ofc usually, most of them will be empty.
+				//
 				// cat: <ver><prev><seqs> <prev> <sc><val><seq>
-				.repeat(20, |b| b
+				.repeat(SCRIPTCODE_SECTION_ITEMS, |b| b
 					.push_opcode(OP_SWAP)
 					.push_opcode(OP_CAT)
 				)
@@ -476,7 +494,7 @@ pub mod bitcoin_sighash {
 		// The max size of this element is 10,012 bytes so we
 		// have to split it up in pushes of 520 max each.
 		let next_element = cur.take_bytes(12 + scriptcode_len).unwrap();
-		util::divide_witness_pushes(witness, 20, false, &next_element);
+		util::divide_witness_pushes(witness, SCRIPTCODE_SECTION_ITEMS, false, &next_element);
 		witness.push(cur.take_bytes(32).unwrap());
 		witness.push(cur.take_bytes(8).unwrap());
 		assert_eq!(cur.position() as usize, sighash_data.len());
