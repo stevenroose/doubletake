@@ -11,6 +11,7 @@ use elements::opcodes::all::*;
 use elements::opcodes::*;
 
 use crate::{BitcoinUtxo, ElementsUtxo};
+use crate::ctv::CtvBurnCovenantBuilder;
 use crate::util::{self, BitcoinEncodableExt, BuilderExt, ElementsEncodableExt, ReadExt};
 
 use self::bitcoin_sighash::SegwitBitcoinSighashBuilder;
@@ -82,7 +83,7 @@ pub fn create_bond_script(
 		.push_opcode(OP_EQUALVERIFY)
 
 		// Covenant to enforce burn amount
-		.burn_covenant(spec.bond_value, spec.bond_asset)
+		.ctv_burn_covenant(spec.bond_value, spec.bond_asset)
 
 		// end the if clause
 		.push_opcode(OP_ENDIF)
@@ -284,11 +285,6 @@ pub fn create_burn_tx(
 
 	bitcoin_sighash::push_witness_items(&mut witness, &spend1);
 	bitcoin_sighash::push_witness_items(&mut witness, &spend2);
-
-	let input_amount = Amount::from_sat(bond_utxo.output.value.explicit().unwrap());
-	burn_covenant::push_witness_items(
-		secp, &mut witness, &ret.output[1..], &ret, &bond_script, input_amount,
-	);
 
 	// We added the elements in reverse, so let's reverse the stack
 	// before we add the witnessScript.

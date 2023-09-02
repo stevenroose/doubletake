@@ -3,6 +3,7 @@
 #[macro_use]
 extern crate serde;
 
+pub mod ctv;
 mod util;
 pub mod segwit;
 
