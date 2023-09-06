@@ -7,7 +7,7 @@ set -e
 python3 ~/code/bsst/bsst/__init__.py --input-file=./segwit.script \
     --z3-enabled=true \
     --is-elements=true \
-    --sigversion=witness_v0 \
+    --sigversion=tapscript \
     | tee segwit.script.report
 
 less ./segwit.script.report
